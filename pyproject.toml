@@ -1,0 +1,36 @@
+[project]
+name = "proxy-md-converter"
+version = "0.1.0"
+description = "Proxy de conversion MD avec Cache S3 et Lock Redis"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.9.0",
+    "boto3>=1.34.0",
+    "redis>=5.0.0",
+    "httpx>=0.27.0",
+    "python-multipart>=0.0.9",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.8.0",
+    "ruff>=0.1.0",
+    "types-redis>=4.6.0",
+    "boto3-stubs[s3]>=1.34.0",
+    "ty>=0.0.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/proxy_md_converter"]
+
+[tool.mypy]
+strict = true
+disallow_untyped_defs = true
+warn_return_any = true
