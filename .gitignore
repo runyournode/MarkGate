@@ -5,3 +5,6 @@ __pychache__
 # IDE
 .idea
 .vscode
+
+# Dev tools
+.ruff_cache
