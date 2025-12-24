@@ -11,6 +11,7 @@ Proxy to convert documents into text:
 
 # todo
 
+- **Tuning all the time-out**
 - cache from multiple buckets:
     - if fails because file is new, add to a default bucket
     - if file is known but conversion version is uncached, add conversion in the source bucket

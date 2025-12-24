@@ -8,3 +8,6 @@ __pychache__
 
 # Dev tools
 .ruff_cache
+
+# Environment variables
+.env
