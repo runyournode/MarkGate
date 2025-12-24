@@ -1,7 +1,7 @@
 import json
 import redis
 from typing import Annotated
-from fastapi import FastAPI, Header, HTTPException, Path, Request, BackgroundTasks
+from fastapi import FastAPI, Header, Body, HTTPException, Path, BackgroundTasks
 from botocore.exceptions import ClientError
 
 from .config import VERSION_CONFIGS, S3_BUCKET, UPSTREAM_URL, ProcessingConfig
@@ -19,18 +19,23 @@ app = FastAPI(title="Proxy MD Converter")
 
 @app.put("/md/{version}/process", response_model=ExternalDocumentOutput)
 async def process_document(
-    request: Request,
-    background_tasks: BackgroundTasks,
     headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
+    background_tasks: BackgroundTasks,
+    file_content: bytes = Body(..., media_type="application/octet-stream"),
     version: str = Path(...),
 ) -> ExternalDocumentOutput | dict:
     if version not in VERSION_CONFIGS:
-        raise HTTPException(404, f"Version {version} not supported")
+        raise HTTPException(
+            400,
+            {
+                "error": f"Version {version} not supported",
+                "supported_versions": sorted(VERSION_CONFIGS),
+            },
+        )
     config: ProcessingConfig = VERSION_CONFIGS[version]
 
-    file_content: bytes = await request.body()
     if not file_content:
-        raise HTTPException(400, "Empty body")
+        raise HTTPException(400, "Empty body (file missing")
 
     file_hash: str = compute_hash(file_content)
     s3_result_key: str = f"documents/{file_hash}/{version}/result.json"

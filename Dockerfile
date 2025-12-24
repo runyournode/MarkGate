@@ -3,8 +3,9 @@
 # `docker build -t proxy-md-converter:<tag> .`
 
 FROM python:3.14-slim-trixie AS builder
-# Get uv
-COPY --from=ghcr.io/astral-sh/uv:0.9.18-python3.14-trixie-slim /uv /bin/uv
+# Setup uv
+COPY --from=ghcr.io/astral-sh/uv:0.9.18-python3.14-trixie-slim /usr/local/bin/uv /bin/uv
+# optionally config uv mirror repo
 
 WORKDIR /app
 
@@ -18,14 +19,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.14-slim-trixie
 
-WORKDIR /app
-
-COPY --from=builder /app/.venv ./
-COPY README.md ./
-COPY src/ ./src/
+COPY --from=builder /app/.venv /app/.venv
+COPY README.md /app/
+COPY src/ /app/src/
 
 # Add uvicorn in path
 ENV PATH="/app/.venv/bin:${PATH}"
 
-ENTRYPOINT ["uvicorn", "proxy_md_converter.main:app"]
+WORKDIR /app
+
+ENTRYPOINT ["uvicorn", "src.proxy_md_converter.main:app"]
 CMD ["--host", "0.0.0.0", "--port", "8080"]

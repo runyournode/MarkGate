@@ -1,5 +1,6 @@
 services:
-  app:
+  proxy-md-converter:
+    image: proxy-md-converter:0.1.0
     build: .
     ports:
       - "8080:8080"
