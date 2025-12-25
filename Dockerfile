@@ -1,6 +1,6 @@
 # Build with python3.14 on trixie
 # (match the tag with version in pyproject.toml)
-# `docker build -t proxy-md-converter:<tag> .`
+# `docker build -t MarkGate:<tag> .`
 
 FROM python:3.14-slim-trixie AS builder
 # Setup uv

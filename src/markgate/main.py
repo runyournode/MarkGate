@@ -29,7 +29,7 @@ from .services import (
 )
 
 # --- Logging Configuration ---
-logger = logging.getLogger("proxy_md_converter")
+logger = logging.getLogger("markgate")
 logger.setLevel(settings.LOG_LEVEL)
 formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"

@@ -19,7 +19,7 @@ else:
 from .config import settings, Version
 from .models import VersionMetadata, GlobalFileAliases
 
-logger = logging.getLogger("proxy_md_converter")
+logger = logging.getLogger("markgate")
 
 s3_client: S3Client = boto3.client(
     service_name="s3",
