@@ -27,9 +27,11 @@ Proxy to convert documents into text:
         ├── 📄 source.pdf          # Native file
         ├── 📄 _aliases.json       # Known original filenames
         ├── 📂 v1/
-        │   ├── 📄 result.json     # Generated Markdown
-        │   └── 📄 metadata.json   # Cache metadata (hits, last access, last filename used) 
+        │   ├── 📄 content.md     # Generated Markdown
+        │   ├── 📄 metadata.json  # Generated Metadata
+        │   └── 📄 _metadata.json   # Cache metadata (hits, last access, last filename used) 
         └── 📂 v2/
-            ├── 📄 result.json
-            └── 📄 metadata.json
+            ├── 📄 content.md
+            ├── 📄 metadata.json
+            └── 📄 _metadata.json
 ```

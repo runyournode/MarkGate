@@ -1,4 +1,5 @@
-from typing import Optional, Literal
+from typing import Optional
+from enum import Enum
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -63,15 +64,24 @@ class ProcessingConfig(BaseModel):
 
 settings = Settings()
 
-VERSION_CONFIGS: dict[str, ProcessingConfig] = {
-    "dev": ProcessingConfig(
+
+# Supported versions
+class Version(str, Enum):
+    DEV = "dev"
+    V1 = "v1"
+    V2 = "v2"
+    V3 = "v3"
+
+
+VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
+    Version.DEV: ProcessingConfig(
         description="Dummy backend for development",
         upstream_url="http://localhost:9999/process",
         authorized_api_key="client-dev-api-key",
         query_params={"param_1": "value_1", "param_2": "value_2"},
         custom_headers={"Authorization": "Bearer backend-dev-api-key"},
     ),
-    "v1": ProcessingConfig(
+    Version.V1: ProcessingConfig(
         description="Marker without llm",
         upstream_url=settings.UPSTREAM_V1_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V1,
@@ -83,7 +93,7 @@ VERSION_CONFIGS: dict[str, ProcessingConfig] = {
         },
         custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V1_API_KEY}"},
     ),
-    "v2": ProcessingConfig(
+    Version.V2: ProcessingConfig(
         description="Marker with qwen3-vl and image description",
         upstream_url=settings.UPSTREAM_V2_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V2,
@@ -102,14 +112,10 @@ VERSION_CONFIGS: dict[str, ProcessingConfig] = {
             "openai_api_key": settings.UPSTREAM_V2_VLLM_API_KEY,
         },
     ),
-    "v3": ProcessingConfig(
+    Version.V3: ProcessingConfig(
         description="Chandra",
         upstream_url=settings.UPSTREAM_V3_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V3,
         custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V3_API_KEY}"},
     ),
 }
-
-
-SUPPORTED_VERSIONS = tuple(VERSION_CONFIGS.keys())
-Version = Literal[tuple(SUPPORTED_VERSIONS)]  # type: ignore[misc]

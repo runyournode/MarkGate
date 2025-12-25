@@ -1,11 +1,12 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
 from urllib.parse import unquote
+
+from pydantic import BaseModel, Field, ConfigDict, RootModel
 
 
 class ExternalDocumentRequestHeaders(BaseModel):
     """
-    Header received from owui
+    Header received from the client (open-webui)
     """
 
     content_type: str = Field(alias="Content-Type")  # mime-type
@@ -18,9 +19,9 @@ class ExternalDocumentRequestHeaders(BaseModel):
         return unquote(self.x_filename)
 
 
-class VersionMetadata(BaseModel):
+class S3Metadata(BaseModel):
     """
-    Metadata for S3
+    Metadata for S3 (_metadata.json)
     """
 
     version: str
@@ -30,13 +31,21 @@ class VersionMetadata(BaseModel):
     last_filename_used: str
 
 
-class GlobalFileAliases(BaseModel):
+class S3FileAliases(BaseModel):
     """
-    File aliases for S3
+    File aliases for S3 (_aliases.json)
     """
 
     file_hash: str
     filenames: list[str] = []
+
+
+class Metadata(RootModel[dict[str, str]]):
+    """
+    Extracted metadata from the backend processor
+    """
+
+    root: dict[str, str] = {}
 
 
 class ProcessedDocument(BaseModel):
@@ -45,7 +54,8 @@ class ProcessedDocument(BaseModel):
     """
 
     page_content: str
-    metadata: dict
+    metadata: Metadata
 
 
-ExternalDocumentOutput = ProcessedDocument | list[ProcessedDocument] | dict
+# Response of this proxy to the client
+ProxyOutput = ProcessedDocument | list[ProcessedDocument] | dict

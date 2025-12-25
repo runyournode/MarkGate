@@ -1,6 +1,6 @@
 # Build with python3.14 on trixie
 # (match the tag with version in pyproject.toml)
-# `docker build -t MarkGate:<tag> .`
+# `docker build -t markgate:<tag> .`
 
 FROM python:3.14-slim-trixie AS builder
 # Setup uv
@@ -28,5 +28,5 @@ ENV PATH="/app/.venv/bin:${PATH}"
 
 WORKDIR /app
 
-ENTRYPOINT ["uvicorn", "src.proxy_md_converter.main:app"]
+ENTRYPOINT ["uvicorn", "src.markgate.main:app"]
 CMD ["--host", "0.0.0.0", "--port", "8080"]
