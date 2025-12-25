@@ -65,7 +65,13 @@ if settings.LOG_FILE:
 
 app: FastAPI = FastAPIOffline(
     title="MarkGate",
-    description="A proxy for markdown converter backends with persistent and versioned cache",
+    description="""
+<div align="center">
+    <img src="/statics/markgate_banner.jpg" alt="MarkGate Banner" width="500" />
+    </br>
+    <b>MarkGater</b>, a proxy for markdown converter backends with persistent and versioned cache.
+</div>
+    """,
     favicon_url="/favicon.ico",
     lifespan=lifespan,
 )

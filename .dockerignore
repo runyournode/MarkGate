@@ -1,3 +1,4 @@
 # Only allow favicon.ico
 src/markgate/statics/*
 !src/markgate/statics/favicon.ico
+!src/markgate/statics/markgate_banner.jpg
