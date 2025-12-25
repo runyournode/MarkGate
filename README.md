@@ -28,7 +28,7 @@ Proxy to convert documents into text:
         ├── 📄 _aliases.json       # Known original filenames
         ├── 📂 v1/
         │   ├── 📄 result.json     # Generated Markdown
-        │   └── 📄 metadata.json   # Processing stats
+        │   └── 📄 metadata.json   # Cache metadata (hits, last access, last filename used) 
         └── 📂 v2/
             ├── 📄 result.json
             └── 📄 metadata.json
