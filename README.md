@@ -18,17 +18,18 @@ Proxy to convert documents into text:
 - upstreams url configurable in config section (enable multiple servers, e.g. one for each conversion version)
 - fallback option to a no cache processing if S3 buckets are unreachable
 
-## Resulting tree on S3 bucket
+## S3 Bucket Structure
 
+```text
 📂 S3 Bucket
 └── 📂 documents/
-└── 📂 abc12345.../  <-- Dossier racine du fichier (Hash)
-├── 📄 source.pdf             <-- Fichier natif (téléchargeable/ouvrable)
-├── 📄 _aliases.json          <-- Liste des noms de fichiers connus (Global)
-├── 📂 v1/
-│ ├── 📄 result.json       <-- Le Markdown généré
-│ └── 📄 metadata.json     <-- Stats d'usage de la V1
-└── 📂 v2/
-├── 📄 result.json
-└── 📄 metadata.json     <-- Stats d'usage de la V2
-
+    └── 📂 abc12345.../            # Content-based hash (Root)
+        ├── 📄 source.pdf          # Native file
+        ├── 📄 _aliases.json       # Known original filenames
+        ├── 📂 v1/
+        │   ├── 📄 result.json     # Generated Markdown
+        │   └── 📄 metadata.json   # Processing stats
+        └── 📂 v2/
+            ├── 📄 result.json
+            └── 📄 metadata.json
+```
