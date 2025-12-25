@@ -1,21 +1,32 @@
-Proxy to convert documents into text:
+MarkGate
+====
 
-- receive request from open-webui external document loader
-- can manage different versions for conversion (configurable as the url/route in open-webui) to a single upstream
-  converter
-- cache the source file (based on hash) and conversions in S3 bucket:
-    - cache hit → simply retrieve & serve the converted file
-    - cache miss → request conversion from the upstream converter, cache and serve
-    - sidecar file cache metadata : aliases, last access, number of access
-- use redis locks to avoid race condition
+<img height="200" src="src/markgate/statics/markgate_banner.jpg" title="MarkGate Banner"/>  
 
-# todo
+**MarkGater**, a proxy for Markdown converter backends with persistent and versioned cache.
 
-- **Tuning all the time-out**
+# Features
+
+Receive request from open-webui external document loader.
+
+Can manage different versions for conversion (configurable as the url/route in open-webui) to multiple upstream
+converters.
+
+Cache the source file (based on hash) and conversions in S3 bucket:
+
+- cache hit → simply retrieve & serve the converted file
+- cache miss → request conversion from the upstream converter, cache and serve
+
+Sidecar file cache metadata : aliases, last access, number of access.
+
+Use redis locks to avoid race condition.
+
+# ToDo
+
+- :warning: **Tuning all the time-out**
 - cache from multiple buckets:
-    - if fails because file is new, add to a default bucket
+    - if Miss because file is new, add to a default bucket
     - if file is known but conversion version is uncached, add conversion in the source bucket
-- upstreams url configurable in config section (enable multiple servers, e.g. one for each conversion version)
 - fallback option to a no cache processing if S3 buckets are unreachable
 
 ## S3 Bucket Structure

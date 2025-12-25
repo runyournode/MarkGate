@@ -69,7 +69,7 @@ app: FastAPI = FastAPIOffline(
 <div align="center">
     <img src="/statics/markgate_banner.jpg" alt="MarkGate Banner" width="500" />
     </br>
-    <b>MarkGater</b>, a proxy for markdown converter backends with persistent and versioned cache.
+    <b>MarkGater</b>, a proxy for Markdown converter backends with persistent and versioned cache.
 </div>
     """,
     favicon_url="/favicon.ico",
