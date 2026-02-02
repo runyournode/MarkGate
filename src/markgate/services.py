@@ -6,7 +6,7 @@ import time
 
 import httpx
 
-from .config import settings, Version
+from .config import VERSION_CONFIGS, ProcessingConfig, Version, settings
 from .models import S3Metadata, S3FileAliases, ProcessedDocument
 from .utils import (
     s3_manager,
@@ -28,6 +28,10 @@ def get_extension(filename: str) -> str:
     return FilePath(filename).suffix.lower()
 
 
+def get_lock_name(file_hash: str, version: Version) -> str:
+    return f"lock:{file_hash}:{version.value}"
+
+
 async def background_update_s3(
     file_hash: str,
     version: Version,
@@ -37,6 +41,7 @@ async def background_update_s3(
 ) -> None:
     """
     Upload / Update file source, _aliases.json and _metadata.json on S3
+    Processed document is out of scope (see update_s3_processed)
     This function includes a double lock :
      - Depending on the hashfile
      - Depending on the hashfile + version
@@ -47,13 +52,16 @@ async def background_update_s3(
     meta_key: str = f"documents/{file_hash}/{version.value}/_metadata.json"
     now: datetime = datetime.now(tz=UTC)
 
-    lock_name: str = f"lock:{file_hash}:{version.value}"
+    lock_name_unversioned: str = f"lock:uploading_source_file:{file_hash}"
+    lock_name_versioned: str = get_lock_name(file_hash, version)
 
     async with (
         redis_manager.client.lock(
-            f"lock:uploading_source_file:{file_hash}", timeout=600, blocking_timeout=20
+            lock_name_unversioned, timeout=600, blocking_timeout=20
         ),
-        redis_manager.client.lock(lock_name, timeout=600, blocking_timeout=20),
+        redis_manager.client.lock(
+            lock_name_versioned, timeout=600, blocking_timeout=20
+        ),
     ):
         try:
             # Upload source file to S3 if new hash
@@ -131,9 +139,39 @@ async def update_s3_processed(
 
 
 async def call_upstream_backend(
-    url: str, content: bytes, headers: dict[str, str], params: dict[str, str | bool]
+    version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
     async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.put(url, content=content, headers=headers, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        # Get the config
+        config: ProcessingConfig = VERSION_CONFIGS[version]
+        # add more headers from config (e.g. secret key)
+        if config.custom_headers:  # api key(s) for the backend
+            headers.update(config.custom_headers)
+
+        match version.value:
+            case "V4":  # routage vers docling
+                files = {"files": (filename, file_content, headers["Content-Type"])}
+
+                resp = await client.post(
+                    url=config.upstream_url,
+                    files=files,
+                    data=config.query_params,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
+                data = resp.json()
+
+                page_content = data.get("document", {}).get("md_content", "")
+
+                return ProcessedDocument(
+                    page_content=page_content,
+                    metadata={
+                        "status": data.get("status"),
+                        "processing_time": data.get("processing_time"),
+                        "errors": data.get("errors"),
+                    },
+                )
+            case _:
+                # Standard PUT for other backends (Marker, etc.)
+                NotImplementedError()

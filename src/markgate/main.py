@@ -18,7 +18,7 @@ from fastapi import (
     Request,
 )
 
-from .config import VERSION_CONFIGS, ProcessingConfig, Version, settings
+from .config import Version, settings
 from .models import (
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
@@ -30,6 +30,7 @@ from .services import (
     update_s3_processed,
     call_upstream_backend,
     compute_hash,
+    get_lock_name,
 )
 from .utils import (
     lifespan,
@@ -61,7 +62,6 @@ if settings.LOG_FILE:
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
 
 app: FastAPI = FastAPIOffline(
     title="MarkGate",
@@ -100,17 +100,16 @@ async def http_exception_handler(_request: Request, exc: HTTPException):
     response_model=ProxyOutput,
 )
 async def process_document(
-    headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
-    version: Version,
-    background_tasks: BackgroundTasks,
-    api_key: Annotated[str, Depends(verify_api_key)],
-    file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
+        headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
+        version: Version,
+        background_tasks: BackgroundTasks,
+        api_key: Annotated[str, Depends(verify_api_key)],
+        file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
 ) -> ProxyOutput | dict:
     start_time = time.perf_counter()
-    config: ProcessingConfig = VERSION_CONFIGS[version]
 
     file_hash: str = compute_hash(file_content)
-    filename = headers_data.filename
+    filename = headers_data.filename  # human readable filename, cannot be passed as header, use headers_data.x_filename
 
     # Log incoming request
     logger.info(
@@ -119,7 +118,7 @@ async def process_document(
 
     s3_content_key: str = f"documents/{file_hash}/{version.value}/content.md"
     s3_metadata_key: str = f"documents/{file_hash}/{version.value}/metadata.json"
-    lock_name: str = f"lock:{file_hash}:{version.value}"
+    lock_name: str = get_lock_name(file_hash, version)
 
     # Add/Update source file, _metadata.json and _aliases.json on S3
     # No need for a lock here as the function already manages locking
@@ -136,7 +135,7 @@ async def process_document(
         try:
             # Cache hit
             if await s3_key_exists(s3_content_key) and await s3_key_exists(
-                s3_metadata_key
+                    s3_metadata_key
             ):
                 s3_start = time.perf_counter()
 
@@ -161,16 +160,14 @@ async def process_document(
                     "Content-Type": headers_data.content_type,
                     "X-Filename": headers_data.x_filename,
                 }
-                if config.custom_headers:  # api key(s) for the backend
-                    upstream_headers.update(config.custom_headers)
 
                 # Send request
                 try:
                     processed_document: ProcessedDocument = await call_upstream_backend(
-                        url=config.upstream_url,
-                        content=file_content,
+                        version=version,
+                        file_content=file_content,
                         headers=upstream_headers,
-                        params=config.query_params,
+                        filename=filename,
                     )
                     upstream_duration = (time.perf_counter() - upstream_start) * 1000
 

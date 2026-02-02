@@ -1,0 +1,73 @@
+services:
+  markgate:
+    image: markgate:0.1.0
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.d/markgate.env
+    depends_on:
+      - valkey:
+          condition: service_healthy
+    networks:
+      - markgate-network-internal
+
+  # Hard dependency : valkey (redis) used for locks
+  valkey:
+    image: docker.io/valkey/valkey:9.0.1-alpine3.23
+    container_name: valkey
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    command: "valkey-server --save 60 1"
+    healthcheck:
+      test: "[ $$(valkey-cli ping) = 'PONG' ]"
+      start_period: 5s
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+    networks:
+      - markgate-network-internal
+
+
+  # Upstream processing backend : an example with docling-serve
+  dockling-serve:
+    image: ghcr.io/docling-project/docling-serve-cu128:v1.11.0
+    container_name: docling-serve
+    ports: # a passer en expose
+      - "5001:5001"
+    env_file:
+      - .env.d/dockling-serve.env
+    # deploy:  # This section is for compatibility with Swarm
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    runtime: nvidia
+    restart: always
+    networks:
+      - markgate-network-internal
+
+
+volumes:
+  redis_data:
+
+networks:
+  markgate-network-internal:
