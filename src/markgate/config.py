@@ -2,6 +2,7 @@ from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
 
 
 image_description_prompt = """You are a document analysis expert who specializes in creating text descriptions for images.
@@ -26,9 +27,10 @@ class Settings(BaseSettings):
     LOG_BACKUP_COUNT: int = 5
 
     S3_ENDPOINT: str = "http://localhost:3900"
-    S3_ACCESS_KEY: str = "admin"
-    S3_SECRET_KEY: str = "password"
-    S3_BUCKET: str = "doc-cache"
+    S3_ACCESS_KEY: str = "GK4bfd698ae1e5d64fb82cda99"
+    S3_SECRET_KEY: str = "9da62e93199a79737603cbc46b05fd03412e582386f0cb19795aec7386c32f9e"
+    S3_BUCKET: str = "markgate-cache"
+    S3_REGION: str = "garage"
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -38,7 +40,7 @@ class Settings(BaseSettings):
     CLIENT_API_KEY_V1: str = "client-secret-v1"
     CLIENT_API_KEY_V2: str = "client-secret-v2"
     CLIENT_API_KEY_V3: str = "client-secret-v3"
-    CLIENT_API_KEY_V4: str = "client-secret-v4"
+    CLIENT_API_KEY_V4: str = "toto"
 
     # --- UPSTREAM CONFIGURATION (Proxy -> Backend) ---
 
@@ -57,10 +59,10 @@ class Settings(BaseSettings):
     UPSTREAM_V3_API_KEY: str = ""  # Key for the LLM service used by V3
 
     # V4: Docling (test!)
-    UPSTREAM_V4_URL: str = "http://dockling-serve:5001/v1/convert/file"
-    UPSTREAM_V4_API_KEY: str = ""  # Key for the V4 backend
-    UPSTREAM_V4_VLLM_URL: str = ""
-    UPSTREAM_V4_VLLM_API_KEY: str = ""  # Key for the LLM service used by V4
+    UPSTREAM_V4_URL: str = "http://localhost:5001/v1/convert/file"
+    UPSTREAM_V4_API_KEY: str = "toto"  # Key for the V4 backend
+    UPSTREAM_V4_VLLM_URL: str = "http://vllm_dumu_url:999"
+    UPSTREAM_V4_VLLM_API_KEY: str = "toto"  # Key for the LLM service used by V4
 
     # todo: a tester que les var env (e.g. export ou celles passées par docker compose)
     #  prennent le dessus sur celles definies dans ce .py ou dans le .env)
@@ -79,7 +81,7 @@ class ProcessingConfig(BaseModel):
     upstream_url: str  # full url/route to the backend
     authorized_api_key: str  # not sent to the backend, used to check if client is allowed to contact this proxy
     query_params: dict[
-        str, str | bool | dict | List | float
+        str, str | int | float | bool | dict | List[str]
     ] = {}  # processing param sent to backend
     custom_headers: dict[str, str] = {}  # secrets sent to backend
 
@@ -95,6 +97,12 @@ class Version(str, Enum):
     V3 = "v3"
     V4 = "v4"
 
+
+# -------------------------------------------------
+# CONFIGURATION FOR THE PROCESSING BACKENDS       -
+# When adding new conf, use json.dumps() for      -
+# nested dict in query_params  (e.g V4)           -
+# -------------------------------------------------
 
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
     Version.DEV: ProcessingConfig(
@@ -155,22 +163,28 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             "ocr_lang": ["en"],
             "pdf_backend": "dlparse_v4",
             "table_cell_matching": False,
+            # "ocr_engine": "easyocr",
+            "ocr_engine": "tesseract",
+            "table_mode": "accurate",
+            "abort_on_error": True,  # effet ?
             "do_formula_enrichment": True,
             "do_picture_description": True,
             "picture_description_area_threshold": 0.01,
-            "picture_description_api": {
-                "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
-                "headers": {
-                    "Authorization": f"Bearer {settings.UPSTREAM_V4_VLLM_API_KEY}",
-                },
-                "params": {
-                    "model": "stepfun-ai/Step3-VL-10B",
-                    "max_completion_tokens": 500,
-                },
-                "timeout": 60,
-                "concurrency": 10,
-                "prompt": image_description_prompt,
-            },
+            "picture_description_api": json.dumps(
+                {
+                    "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
+                    "headers": {
+                        "Authorization": f"Bearer {settings.UPSTREAM_V4_VLLM_API_KEY}",
+                    },
+                    "params": {
+                        "model": "stepfun-ai/Step3-VL-10B",
+                        "max_completion_tokens": 500,
+                    },
+                    "timeout": 60,
+                    "concurrency": 10,
+                    "prompt": image_description_prompt,
+                }
+            ),
             # "vlm_pipeline_model_api": {
             #     "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
             #     "headers": {
@@ -182,11 +196,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             #     "response_format": "",
             #     "concurrency": 10,
             # },
-            # default params
-            "ocr_engine": "easyocr",
-            "table_mode": "accurate",
-            "abort_on_error": False,
         },
-        custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V4_API_KEY}"},
+        custom_headers={"X-Api-Key": settings.UPSTREAM_V4_API_KEY},
     ),
 }

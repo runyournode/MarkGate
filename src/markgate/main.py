@@ -18,21 +18,21 @@ from fastapi import (
     Request,
 )
 
-from .config import Version, settings
-from .models import (
+from config import Version, settings
+from models import (
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
     ProxyOutput,
     Metadata,
 )
-from .services import (
+from services import (
     background_update_s3,
     update_s3_processed,
     call_upstream_backend,
     compute_hash,
     get_lock_name,
 )
-from .utils import (
+from utils import (
     lifespan,
     redis_manager,
     verify_api_key,
@@ -120,8 +120,7 @@ async def process_document(
     s3_metadata_key: str = f"documents/{file_hash}/{version.value}/metadata.json"
     lock_name: str = get_lock_name(file_hash, version)
 
-    # Add/Update source file, _metadata.json and _aliases.json on S3
-    # No need for a lock here as the function already manages locking
+    # Add/Update source file, _metadata.json and _aliases.json on S3 (will be processed after we return response)
     background_tasks.add_task(
         background_update_s3,
         file_hash,
@@ -130,6 +129,7 @@ async def process_document(
         file_content,
         headers_data.content_type,
     )
+
 
     async with redis_manager.client.lock(lock_name, timeout=600, blocking_timeout=20):
         try:
@@ -216,3 +216,8 @@ async def process_document(
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return FileResponse(STATICS_DIR / "favicon.ico", media_type="image/x-icon")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)

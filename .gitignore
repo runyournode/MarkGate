@@ -11,3 +11,6 @@ __pychache__
 
 # Environment variables
 .env
+
+# docker runtime volumes
+docker/mounts_runtime/docling/.cache/*

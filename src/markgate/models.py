@@ -1,6 +1,6 @@
 from datetime import datetime
 from urllib.parse import unquote
-
+from typing import Any
 from pydantic import BaseModel, Field, ConfigDict, RootModel
 
 
@@ -40,12 +40,12 @@ class S3FileAliases(BaseModel):
     filenames: list[str] = []
 
 
-class Metadata(RootModel[dict[str, str]]):
+class Metadata(RootModel[dict[str, Any]]):
     """
     Extracted metadata from the backend processor
     """
 
-    root: dict[str, str] = {}
+    root: dict[str, Any] = {}
 
 
 class ProcessedDocument(BaseModel):

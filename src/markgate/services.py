@@ -3,18 +3,20 @@ from datetime import UTC, datetime
 from pathlib import Path as FilePath
 import hashlib
 import time
+import json
 
 import httpx
 
-from .config import VERSION_CONFIGS, ProcessingConfig, Version, settings
-from .models import S3Metadata, S3FileAliases, ProcessedDocument
-from .utils import (
+from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
+from models import S3Metadata, S3FileAliases, ProcessedDocument, Metadata
+from utils import (
     s3_manager,
     s3_put_content,
     s3_key_exists,
     s3_get_pydantic,
     s3_put_pydantic,
     redis_manager,
+    get_mime_type,
 )
 
 logger = logging.getLogger("markgate")
@@ -65,7 +67,7 @@ async def background_update_s3(
     ):
         try:
             # Upload source file to S3 if new hash
-            if not s3_key_exists(source_key):
+            if not await s3_key_exists(source_key):
                 start_time = time.perf_counter()
                 logger.info(
                     f"BG [{version.value}] | Uploading source file: {filename} | Hash: {file_hash}"
@@ -83,7 +85,7 @@ async def background_update_s3(
                 )
 
             # Create / Update _aliases file
-            if s3_key_exists(alias_key):
+            if await s3_key_exists(alias_key):
                 aliases = await s3_get_pydantic(alias_key, S3FileAliases)
 
                 if filename not in aliases.filenames:
@@ -100,7 +102,7 @@ async def background_update_s3(
                 await s3_put_pydantic(alias_key, new_aliases)
 
             # Create / Update _metadata file
-            if s3_key_exists(meta_key):
+            if await s3_key_exists(meta_key):
                 meta = await s3_get_pydantic(meta_key, S3Metadata)
                 meta.last_hit_at = now
                 meta.hit_count += 1
@@ -141,22 +143,56 @@ async def update_s3_processed(
 async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as async_client:
+    # with httpx.Client(timeout=300.0) as client:
         # Get the config
         config: ProcessingConfig = VERSION_CONFIGS[version]
+
         # add more headers from config (e.g. secret key)
-        if config.custom_headers:  # api key(s) for the backend
-            headers.update(config.custom_headers)
+        # if config.custom_headers:  # api key(s) for the backend
+        #     headers.update(config.custom_headers)
 
-        match version.value:
-            case "V4":  # routage vers docling
-                files = {"files": (filename, file_content, headers["Content-Type"])}
+        match version:
+            case Version.V4:  # routage vers docling
+                # files = {"files": (filename, file_content, headers["Content-Type"])}
 
-                resp = await client.post(
+                content_type = headers["Content-Type"]
+                if content_type == 'application/octet-stream':
+                    content_type = get_mime_type(file_content)
+
+
+                files = {"files": (filename, file_content, content_type)}
+
+                # debug
+                # url = "http://localhost:5001/v1/convert/file"
+                # parameters = {
+                #     "from_formats": [
+                #         "docx",
+                #         "pptx",
+                #         "html",
+                #         "image",
+                #         "pdf",
+                #         "asciidoc",
+                #         "md",
+                #         "xlsx",
+                #     ],
+                #     "to_formats": ["md", "json", "html", "text", "doctags"],
+                #     "image_export_mode": "placeholder",
+                #     "do_ocr": True,
+                #     "force_ocr": False,
+                #     "ocr_engine": "easyocr",
+                #     "ocr_lang": ["en"],
+                #     "pdf_backend": "dlparse_v2",
+                #     "table_mode": "fast",
+                #     "abort_on_error": False,
+                # }
+                # resp = await async_client.post(url, files=files, data=parameters, headers=config.custom_headers)
+
+                resp = await async_client.post(
                     url=config.upstream_url,
                     files=files,
                     data=config.query_params,
-                    headers=headers,
+                    headers=config.custom_headers,
                 )
                 resp.raise_for_status()
 
@@ -166,11 +202,11 @@ async def call_upstream_backend(
 
                 return ProcessedDocument(
                     page_content=page_content,
-                    metadata={
-                        "status": data.get("status"),
-                        "processing_time": data.get("processing_time"),
-                        "errors": data.get("errors"),
-                    },
+                    metadata=Metadata(
+                        status=data.get("status"),
+                        processing_time=data.get("processing_time"),
+                        errors=data.get("errors"),
+                    ),
                 )
             case _:
                 # Standard PUT for other backends (Marker, etc.)

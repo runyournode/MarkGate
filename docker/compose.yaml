@@ -9,7 +9,7 @@ services:
     env_file:
       - .env.d/markgate.env
     depends_on:
-      - valkey:
+     valkey:
           condition: service_healthy
     networks:
       - markgate-network-internal
@@ -18,8 +18,8 @@ services:
   valkey:
     image: docker.io/valkey/valkey:9.0.1-alpine3.23
     container_name: valkey
-    expose:
-      - "6379"
+    ports:  # à passer en expose
+      - "6379:6379"
     volumes:
       - redis_data:/data
     command: "valkey-server --save 60 1"
@@ -29,7 +29,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      restart: unless-stopped
+    restart: unless-stopped
     cap_drop:
       - ALL
     cap_add:
@@ -46,13 +46,15 @@ services:
 
 
   # Upstream processing backend : an example with docling-serve
-  dockling-serve:
+  docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.11.0
     container_name: docling-serve
-    ports: # a passer en expose
+    ports: # à passer en expose
       - "5001:5001"
     env_file:
       - .env.d/dockling-serve.env
+    volumes:
+      - ${DOCLING_RUN}/.cache:/opt/app-root/src/.cache/:Z
     # deploy:  # This section is for compatibility with Swarm
     #   resources:
     #     reservations:

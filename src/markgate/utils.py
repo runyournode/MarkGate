@@ -1,3 +1,4 @@
+import magic
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, TypeVar, Type, Any
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 else:
     S3Client = Any
 
-from .config import settings, Version, VERSION_CONFIGS
+from config import settings, Version, VERSION_CONFIGS
 
 
 # -----------------------------------
@@ -140,6 +141,7 @@ async def lifespan(_app: FastAPI):
             endpoint_url=settings.S3_ENDPOINT,
             aws_access_key_id=settings.S3_ACCESS_KEY,
             aws_secret_access_key=settings.S3_SECRET_KEY,
+            region_name=settings.S3_REGION,
         ) as s3_c,
         Redis(
             host=settings.REDIS_HOST,
@@ -152,6 +154,7 @@ async def lifespan(_app: FastAPI):
         s3_manager.client = s3_c
         redis_manager.client = redis_c
         yield  # L'application tourne ici
+
 
 
 # -----------------------------------
@@ -182,3 +185,8 @@ async def verify_api_key(
 # -----------------------------------
 # Lifespan management               -
 # -----------------------------------
+
+def get_mime_type(content: bytes) -> str:
+    # Initialise magic pour retourner le type MIME
+    mime = magic.Magic(mime=True)
+    return mime.from_buffer(content)
