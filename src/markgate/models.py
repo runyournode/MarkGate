@@ -1,7 +1,9 @@
 from datetime import datetime
 from urllib.parse import unquote
-from typing import Any
-from pydantic import BaseModel, Field, ConfigDict, RootModel
+from typing import Any, Annotated
+
+from pydantic import BaseModel, Field, ConfigDict, RootModel, SkipValidation, WithJsonSchema
+from PIL import Image
 
 
 class ExternalDocumentRequestHeaders(BaseModel):
@@ -48,14 +50,36 @@ class Metadata(RootModel[dict[str, Any]]):
     root: dict[str, Any] = {}
 
 
-class ProcessedDocument(BaseModel):
+# On crée un alias de type pour clarifier le code
+# SkipValidation évite que Pydantic essaie de valider l'objet au runtime
+# WithJsonSchema empêche le crash de /docs en simulant un type connu
+# PillowImage = Annotated[
+#     Image.Image,
+#     SkipValidation,
+#     WithJsonSchema({"type": "string", "description": "PIL Image object (internal use only)"})
+# ]
+
+
+
+class ResponseDocument(BaseModel):
+    """
+    Response from this proxy/gateway
+    We do not support images (yet)
+    """
+    page_content: str
+    metadata: Metadata | None = None
+
+class ProcessedDocument(ResponseDocument):
     """
     Response from processing backend
+    :warning: As we are storing PIL images, it is not serializable !
     """
-
-    page_content: str
-    metadata: Metadata
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # page_content: str
+    # metadata: Metadata | None = None
+    # images: dict[str, PillowImage] | None = None  # same error, need to add arbitrary_types_allowed=True
+    images: dict[str, Image.Image] | None = None
 
 
 # Response of this proxy to the client
-ProxyOutput = ProcessedDocument | list[ProcessedDocument] | dict
+ProxyOutput = ResponseDocument | list[ResponseDocument] | dict

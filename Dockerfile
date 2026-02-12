@@ -1,6 +1,6 @@
 # Build with python3.14 on trixie
 # (match the tag with version in pyproject.toml)
-# `docker build -t markgate:<tag> .`
+# `docker build -f docker/Dockerfile -t markgate:<tag> .`
 
 FROM python:3.14-slim-trixie AS builder
 # Setup uv
@@ -19,14 +19,25 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.14-slim-trixie
 
+ENV PATH="/app/.venv/bin:${PATH}"
+
+
+RUN apt update \
+    && apt upgrade \
+    && apt install -y --no-install-recommends \
+        libmagic1 \
+    && apt autoremove -y \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/.venv /app/.venv
-COPY README.md /app/
-COPY src/ /app/src/
+#COPY README.md /app/
+COPY src/markgate/ /app/
 
 # Add uvicorn in path
-ENV PATH="/app/.venv/bin:${PATH}"
+
 
 WORKDIR /app
 
-ENTRYPOINT ["uvicorn", "src.markgate.main:app"]
-CMD ["--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0"]
+CMD ["--port", "8080"]

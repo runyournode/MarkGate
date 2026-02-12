@@ -3,8 +3,10 @@ from datetime import UTC, datetime
 from pathlib import Path as FilePath
 import hashlib
 import time
-import json
+from io import BytesIO
+import base64
 
+from PIL import Image
 import httpx
 
 from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
@@ -12,6 +14,7 @@ from models import S3Metadata, S3FileAliases, ProcessedDocument, Metadata
 from utils import (
     s3_manager,
     s3_put_content,
+    s3_put_imgs,
     s3_key_exists,
     s3_get_pydantic,
     s3_put_pydantic,
@@ -130,14 +133,19 @@ async def update_s3_processed(
     processed_document: ProcessedDocument,
     s3_content_key: str,
     s3_metadata_key: str,
+    s3_imgs_key: str
 ):
     """
-    Upload the processed document: md extraction and metadata (from backend processor)
+    Upload the processed document: md extraction, metadata (from backend processor) and optionnaly images
     This function should always be directly executed in the route (not a background task)
      and called within a lock depending on the hashfile + version
     """
     await s3_put_content(s3_content_key, processed_document.page_content)
-    await s3_put_pydantic(s3_metadata_key, processed_document.metadata)
+    # metadata and images are optional
+    if processed_document.metadata:
+        await s3_put_pydantic(s3_metadata_key, processed_document.metadata)
+    if processed_document.images:
+        await s3_put_imgs(s3_imgs_key, processed_document.images)
 
 
 async def call_upstream_backend(
@@ -208,6 +216,37 @@ async def call_upstream_backend(
                         errors=data.get("errors"),
                     ),
                 )
+
+            case Version.V5:
+
+                config.custom_headers.update(
+                    {"Content-Type": "application/octet-stream"}
+                )
+
+                resp = await async_client.post(
+                    url=config.upstream_url,
+                    content=file_content,
+                    headers=config.custom_headers,
+                )
+                resp.raise_for_status()
+
+                data = resp.json()
+                page_content: str = data.get("page_content")
+                images: dict[str, str] = data.get("images")
+                # Conversion images en PIL -> RGB
+                # "imgs/img_in_image_box_326_1256_883_1395.jpg": "base64 string"
+                #  -> {img_in_image_box_326_1256_883_1395.jpg: Image.Image item}
+                images: dict[str, Image.Image] = {
+                    key: Image.open(BytesIO(base64.b64decode(value))).convert('RGB')
+                    for key, value in images.items()
+                }
+
+                return ProcessedDocument(
+                    page_content=page_content,
+                    # metadata=Metadata(...),  # todo: add metadata in upstream (compute time, ...) ,
+                    images=images,
+                )
+
             case _:
                 # Standard PUT for other backends (Marker, etc.)
                 NotImplementedError()

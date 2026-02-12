@@ -116,8 +116,10 @@ async def process_document(
         f"REQ [{version.value}] | File: {filename} | Hash: {file_hash} | ClientKey: {api_key[:4]}***"
     )
 
-    s3_content_key: str = f"documents/{file_hash}/{version.value}/content.md"
-    s3_metadata_key: str = f"documents/{file_hash}/{version.value}/metadata.json"
+    s3_root_key: str = f"documents/{file_hash}/{version.value}"
+    s3_content_key: str = f"{s3_root_key}/content.md"
+    s3_metadata_key: str = f"{s3_root_key}/metadata.json"
+    s3_imgs_key: str = f"{s3_root_key}/images"
     lock_name: str = get_lock_name(file_hash, version)
 
     # Add/Update source file, _metadata.json and _aliases.json on S3 (will be processed after we return response)
@@ -134,13 +136,16 @@ async def process_document(
     async with redis_manager.client.lock(lock_name, timeout=600, blocking_timeout=20):
         try:
             # Cache hit
-            if await s3_key_exists(s3_content_key) and await s3_key_exists(
-                    s3_metadata_key
-            ):
+            if await s3_key_exists(s3_content_key):
                 s3_start = time.perf_counter()
 
                 page_content = await s3_get_content(s3_content_key)
-                metadata = await s3_get_pydantic(s3_metadata_key, Metadata)
+
+                # Metadata are optional
+                if await s3_key_exists(s3_metadata_key):
+                    metadata = await s3_get_pydantic(s3_metadata_key, Metadata)
+                else:
+                    metadata = None
 
                 s3_duration = (time.perf_counter() - s3_start) * 1000
                 duration = (time.perf_counter() - start_time) * 1000
@@ -183,6 +188,7 @@ async def process_document(
                         processed_document,
                         s3_content_key,
                         s3_metadata_key,
+                        s3_imgs_key
                     )
 
                     duration = (time.perf_counter() - start_time) * 1000
@@ -190,7 +196,14 @@ async def process_document(
                     logger.info(
                         f"RES [{version.value}] | UPSTREAM OK | Total: {duration:.0f} ms | Upstream: {upstream_duration:.0f} ms | File: {filename}"
                     )
-                    return processed_document
+
+                    # Il faut reconstruire un objet sans image pil pour la response (pil serialization error)
+                    response_document = ProcessedDocument(
+                        page_content=processed_document.page_content,
+                        metadata=processed_document.metadata
+                    )
+                    return response_document
+
                 except Exception as e:
                     upstream_duration = (time.perf_counter() - upstream_start) * 1000
                     raise HTTPException(

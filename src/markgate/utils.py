@@ -1,7 +1,9 @@
-import magic
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, TypeVar, Type, Any
+from io import BytesIO
 
+import magic
 from fastapi import (
     FastAPI,
     Depends,
@@ -12,6 +14,7 @@ from pydantic import BaseModel
 import aioboto3
 from botocore.exceptions import ClientError
 from redis.asyncio import Redis
+from PIL import Image
 
 # enable type-checking without needing dev dependencies at runtime
 if TYPE_CHECKING:
@@ -81,8 +84,31 @@ async def s3_put_content(key: str, content: str):
     )
 
 
-T = TypeVar("T", bound=BaseModel)
+async def s3_put_imgs(root_img_key: str, images: dict[str, Image.Image]):
+    """Envoie les images dans le S3 (si upstream processor les a fournis)"""
+    for filename, image in images.items():
+        # Clé S3 pour l'image (enforced jpg)
+        filename = Path(filename).with_suffix('.jpg').as_posix()
+        s3_key = f'{root_img_key}/{filename}'
 
+        # Sauvegarde objet pil dans buffer
+        buffer = BytesIO()
+        image.save(buffer, format='JPEG', quality=95, subsampling=0)
+        buffer.seek(0)
+
+        await s3_manager.client.put_object(
+            Bucket=settings.S3_BUCKET,
+            Key=s3_key,
+            Body=buffer,
+            ContentType='image/jpeg',
+        )
+
+async def s3_get_imgs(root_img_key: str):
+    NotImplementedError()
+
+
+
+T = TypeVar("T", bound=BaseModel)
 
 async def s3_get_pydantic(key: str, base_model: Type[T]) -> T:
     """Récupère un objet S3 et le transforme directement en modèle Pydantic."""
@@ -100,6 +126,8 @@ async def s3_put_pydantic(key: str, model_item: BaseModel):
         Body=model_item.model_dump_json(),
         ContentType="application/json",
     )
+
+
 
 
 # -----------------------------------
@@ -177,7 +205,7 @@ async def verify_api_key(
         masked_key = (api_key[:4] + "***") if api_key else "None"
         raise HTTPException(
             status_code=403,
-            detail=f"Unauthorized access attempt for version {version.value}. Key provided: {masked_key}",
+            detail=f"Unauthorized access for version {version.value}. Key provided: {masked_key}",
         )
     return api_key
 

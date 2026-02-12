@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     CLIENT_API_KEY_V2: str = "client-secret-v2"
     CLIENT_API_KEY_V3: str = "client-secret-v3"
     CLIENT_API_KEY_V4: str = "toto"
+    CLIENT_API_KEY_V5: str = "changeme"
 
     # --- UPSTREAM CONFIGURATION (Proxy -> Backend) ---
 
@@ -63,6 +64,11 @@ class Settings(BaseSettings):
     UPSTREAM_V4_API_KEY: str = "toto"  # Key for the V4 backend
     UPSTREAM_V4_VLLM_URL: str = "http://vllm_dumu_url:999"
     UPSTREAM_V4_VLLM_API_KEY: str = "toto"  # Key for the LLM service used by V4
+
+    # V5: Paddle (test!)
+    UPSTREAM_V5_URL: str = "http://localhost:8081/v1/process"
+    UPSTREAM_V5_API_KEY: str = "changeme"  # Key for the V5 backend
+
 
     # todo: a tester que les var env (e.g. export ou celles passées par docker compose)
     #  prennent le dessus sur celles definies dans ce .py ou dans le .env)
@@ -96,6 +102,7 @@ class Version(str, Enum):
     V2 = "v2"
     V3 = "v3"
     V4 = "v4"
+    V5 = "v5"
 
 
 # -------------------------------------------------
@@ -103,7 +110,6 @@ class Version(str, Enum):
 # When adding new conf, use json.dumps() for      -
 # nested dict in query_params  (e.g V4)           -
 # -------------------------------------------------
-
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
     Version.DEV: ProcessingConfig(
         description="Dummy backend for development",
@@ -199,4 +205,13 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         },
         custom_headers={"X-Api-Key": settings.UPSTREAM_V4_API_KEY},
     ),
+
+    Version.V5 : ProcessingConfig(
+        description='PaddleOCR-VL-1.5, ocr basique dans les images (pas de description vlm)',
+        upstream_url=settings.UPSTREAM_V5_URL,
+        authorized_api_key=settings.CLIENT_API_KEY_V5,
+        query_params={},
+        custom_headers={'Authorization': f'Bearer {settings.UPSTREAM_V5_API_KEY}'}
+    )
 }
+

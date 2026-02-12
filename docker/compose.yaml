@@ -1,9 +1,13 @@
 services:
   markgate:
-    image: markgate:0.1.0
+#    image: markgate:0.1.0
+    image: ghcr.io/runyournode/markgate:0.1.0-alpha
+    container_name: markgate
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    extra_hosts:  # si le S3 n'est pas dans la stack
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
     env_file:
@@ -18,7 +22,9 @@ services:
   valkey:
     image: docker.io/valkey/valkey:9.0.1-alpine3.23
     container_name: valkey
-    ports:  # à passer en expose
+    expose:
+      - "6379"
+    ports:  # todo : à passer en expose
       - "6379:6379"
     volumes:
       - redis_data:/data
@@ -47,6 +53,8 @@ services:
 
   # Upstream processing backend : an example with docling-serve
   docling-serve:
+    profiles:
+      - dev-tools-docling
     image: ghcr.io/docling-project/docling-serve-cu128:v1.11.0
     container_name: docling-serve
     ports: # à passer en expose
@@ -67,6 +75,56 @@ services:
     networks:
       - markgate-network-internal
 
+  paddleocr-vl-api:
+    profiles:
+      - dev-tools-paddle
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:${API_IMAGE_TAG_SUFFIX}
+    container_name: paddleocr-vl-api
+    ports:
+      - "8081:8080"
+    depends_on:
+      paddleocr-vlm-server:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ "0" ]
+              capabilities: [ gpu ]
+    # TODO: Allow using a regular user
+    user: root
+    restart: unless-stopped
+    environment:
+      - VLM_BACKEND=${VLM_BACKEND:-vllm}
+    volumes:
+      - ./mounts_config/paddle/pipeline_config_vllm.yaml:/home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml
+    command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml"
+    networks:
+      - markgate-network-internal
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+
+  paddleocr-vlm-server:
+    profiles:
+      - dev-tools-paddle
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-${VLM_BACKEND}-server:${VLM_IMAGE_TAG_SUFFIX}
+    container_name: paddleocr-vlm-server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ "0" ]
+              capabilities: [ gpu ]
+    # TODO: Allow using a regular user
+    user: root
+    restart: unless-stopped
+    networks:
+      - markgate-network-internal
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+      start_period: 300s
 
 volumes:
   redis_data:

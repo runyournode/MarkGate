@@ -21,9 +21,20 @@ Sidecar file cache metadata : aliases, last access, number of access.
 
 Use redis locks to avoid race condition.
 
-# ToDo
+# Known Issues:
 
+ - [minor] Requesting processing a file in cache but with a different filename will uselessly reupload the file to S3 (upstream processing won't be called ).  
+  As a result we could result in `source.bin` `source.pdf` stored on the s3. See Todo: resolve mime-type
+
+# Dev status
+ - Well tested for V5 config only
+ - docker/ define some docling and paddle server, do not use them in production
+
+
+
+# ToDo
 - :warning: **Tuning all the time-out**
+- auto resolve mime time (to avoid saving in S3 a source.bin if can e.g save a source.pdf or source.xlsx )
 - cache from multiple buckets:
     - if Miss because file is new, add to a default bucket
     - if file is known but conversion version is uncached, add conversion in the source bucket
