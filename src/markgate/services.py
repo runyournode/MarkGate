@@ -20,6 +20,7 @@ from utils import (
     s3_put_pydantic,
     redis_manager,
     get_mime_type,
+    base64_to_pil,
 )
 
 logger = logging.getLogger("markgate")
@@ -159,9 +160,34 @@ async def call_upstream_backend(
         # add more headers from config (e.g. secret key)
         # if config.custom_headers:  # api key(s) for the backend
         #     headers.update(config.custom_headers)
-
         match version:
-            case Version.V4:  # routage vers docling
+            case ( # routage vers paddleocrvl_server
+                Version.v_1_0_0 | Version.v_1_1_0
+            ):
+                resp = await async_client.post(
+                    url=config.upstream_url,
+                    content=file_content,
+                    params=config.query_params, # {} pour v1
+                    headers=config.custom_headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Get md and dict of images (b64) from response
+                page_content = data.get("page_content", "")
+                imgs: dict[str, str] = data.get("images", {})
+
+                # Convert to pil
+                imgs: dict[str, Image.Image] = {name: base64_to_pil(img) for name, img in imgs.items()}
+
+                return ProcessedDocument(
+                    page_content=page_content,
+                    images=imgs,
+                    metadata=Metadata(), # empty for paddleocrvl_server
+                )
+
+
+            case Version.v_4_0_0:  # routage vers docling
                 # files = {"files": (filename, file_content, headers["Content-Type"])}
 
                 content_type = headers["Content-Type"]
@@ -215,38 +241,9 @@ async def call_upstream_backend(
                         processing_time=data.get("processing_time"),
                         errors=data.get("errors"),
                     ),
-                )
-
-            case Version.V5:
-
-                config.custom_headers.update(
-                    {"Content-Type": "application/octet-stream"}
-                )
-
-                resp = await async_client.post(
-                    url=config.upstream_url,
-                    content=file_content,
-                    headers=config.custom_headers,
-                )
-                resp.raise_for_status()
-
-                data = resp.json()
-                page_content: str = data.get("page_content")
-                images: dict[str, str] = data.get("images")
-                # Conversion images en PIL -> RGB
-                # "imgs/img_in_image_box_326_1256_883_1395.jpg": "base64 string"
-                #  -> {img_in_image_box_326_1256_883_1395.jpg: Image.Image item}
-                images: dict[str, Image.Image] = {
-                    key: Image.open(BytesIO(base64.b64decode(value))).convert('RGB')
-                    for key, value in images.items()
-                }
-
-                return ProcessedDocument(
-                    page_content=page_content,
-                    # metadata=Metadata(...),  # todo: add metadata in upstream (compute time, ...) ,
-                    images=images,
+                    images={}
                 )
 
             case _:
                 # Standard PUT for other backends (Marker, etc.)
-                NotImplementedError()
+                raise NotImplementedError()

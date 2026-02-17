@@ -60,25 +60,28 @@ class Metadata(RootModel[dict[str, Any]]):
 # ]
 
 
-
 class ResponseDocument(BaseModel):
     """
     Response from this proxy/gateway
-    We do not support images (yet)
+    Images are not sent back (yet)
     """
     page_content: str
     metadata: Metadata | None = None
 
 class ProcessedDocument(ResponseDocument):
     """
-    Response from processing backend
+    Return for `call_upstream_backend` that process the response from the processing backend
+    This is an intermediairia/internal format and not sent to the client
     :warning: As we are storing PIL images, it is not serializable !
     """
+    page_content: str
+    images: dict[str, Image.Image]
+    metadata: Metadata | None = None
+
+    # allows to have non serializable data
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    # page_content: str
-    # metadata: Metadata | None = None
-    # images: dict[str, PillowImage] | None = None  # same error, need to add arbitrary_types_allowed=True
-    images: dict[str, Image.Image] | None = None
+
+
 
 
 # Response of this proxy to the client

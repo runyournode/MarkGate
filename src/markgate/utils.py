@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, TypeVar, Type, Any
@@ -218,3 +219,9 @@ def get_mime_type(content: bytes) -> str:
     # Initialise magic pour retourner le type MIME
     mime = magic.Magic(mime=True)
     return mime.from_buffer(content)
+
+
+def base64_to_pil(base64_str: str) -> Image.Image:
+    img_data = base64.b64decode(base64_str)
+    img = Image.open(BytesIO(img_data))
+    return img

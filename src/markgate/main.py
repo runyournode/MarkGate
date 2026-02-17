@@ -22,6 +22,7 @@ from config import Version, settings
 from models import (
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
+    ResponseDocument,
     ProxyOutput,
     Metadata,
 )
@@ -136,6 +137,7 @@ async def process_document(
     async with redis_manager.client.lock(lock_name, timeout=600, blocking_timeout=20):
         try:
             # Cache hit
+            # if False:
             if await s3_key_exists(s3_content_key):
                 s3_start = time.perf_counter()
 
@@ -197,8 +199,8 @@ async def process_document(
                         f"RES [{version.value}] | UPSTREAM OK | Total: {duration:.0f} ms | Upstream: {upstream_duration:.0f} ms | File: {filename}"
                     )
 
-                    # Il faut reconstruire un objet sans image pil pour la response (pil serialization error)
-                    response_document = ProcessedDocument(
+
+                    response_document = ResponseDocument(
                         page_content=processed_document.page_content,
                         metadata=processed_document.metadata
                     )

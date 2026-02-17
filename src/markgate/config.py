@@ -37,17 +37,24 @@ class Settings(BaseSettings):
 
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
     # Keys that clients (e.g. Open WebUI) must provide to use this proxy
-    CLIENT_API_KEY_V1: str = "client-secret-v1"
-    CLIENT_API_KEY_V2: str = "client-secret-v2"
-    CLIENT_API_KEY_V3: str = "client-secret-v3"
-    CLIENT_API_KEY_V4: str = "toto"
-    CLIENT_API_KEY_V5: str = "changeme"
+    CLIENT_API_KEY_V100: str = "changeme"
+    CLIENT_API_KEY_V110: str = "changeme"
+
+    CLIENT_API_KEY_V200: str = "changeme"
+    CLIENT_API_KEY_V300: str = "changeme"
+    CLIENT_API_KEY_V400: str = "changeme"
+
 
     # --- UPSTREAM CONFIGURATION (Proxy -> Backend) ---
 
-    # V1: Marker without llm
-    UPSTREAM_V1_URL: str = "http://localhost:9000/process"
-    UPSTREAM_V1_API_KEY: str = ""  # Key for the V1 backend
+    # V1: paddleocrvl_server
+    UPSTREAM_V100_URL: str = "http://localhost:8081/v1/process"
+    UPSTREAM_V100_API_KEY: str = "changeme"  # Key for the V1 backend
+
+    # V1: paddleocrvl_server + ministral-3-3b
+    UPSTREAM_V110_URL: str = "http://localhost:8081/v1/process"
+    UPSTREAM_V110_API_KEY: str = "changeme"  # Key for the V1 backend
+
 
     # V2: Marker with qwen3-vl and image description
     UPSTREAM_V2_URL: str = "http://localhost:9001/process"
@@ -65,11 +72,6 @@ class Settings(BaseSettings):
     UPSTREAM_V4_VLLM_URL: str = "http://vllm_dumu_url:999"
     UPSTREAM_V4_VLLM_API_KEY: str = "toto"  # Key for the LLM service used by V4
 
-    # V5: Paddle (test!)
-    UPSTREAM_V5_URL: str = "http://localhost:8081/v1/process"
-    UPSTREAM_V5_API_KEY: str = "changeme"  # Key for the V5 backend
-
-
     # todo: a tester que les var env (e.g. export ou celles passées par docker compose)
     #  prennent le dessus sur celles definies dans ce .py ou dans le .env)
     model_config = SettingsConfigDict(
@@ -82,7 +84,6 @@ class ProcessingConfig(BaseModel):
     """
     Configuration of the processing backend
     """
-
     description: str  # not sent to backend, fyi only
     upstream_url: str  # full url/route to the backend
     authorized_api_key: str  # not sent to the backend, used to check if client is allowed to contact this proxy
@@ -92,17 +93,37 @@ class ProcessingConfig(BaseModel):
     custom_headers: dict[str, str] = {}  # secrets sent to backend
 
 
-settings = Settings()
-
-
 # Supported versions
 class Version(str, Enum):
-    DEV = "dev"
-    V1 = "v1"
-    V2 = "v2"
-    V3 = "v3"
-    V4 = "v4"
-    V5 = "v5"
+    """
+    Nomenclature des versions : v_X_Y_Z
+    X : Moteur principal du backend de Layout + OCR (ex: paddle, marker, docling, ...)
+    Y : Changement Radical du backend (ex: VLM utilisé en plus pour la description d'image)
+    Z : Incréments éventuels (correction bug majeur, ...)
+
+    Pour le dev utiliser V
+    """
+
+    # Padlle
+
+    v_1_0_0 = "v1.0.0"
+    v_1_1_0 = "v1.1.0" # + ministral-3-3b
+
+
+    # Marker
+    v_2_0_0 = "v2.0.0"
+    v_2_1_0 = "v2.1.0"
+    v_2_2_0 = "v2.2.0"  # document extractor (dedicated video processing)
+
+    # Chandra
+    v_3_0_0 = "v3.0.0"
+
+    # Docling
+    v_4_0_0 = "v4.0.0"
+    v_4_1_0 = "v4.1.0"
+
+    # For dev (upstream configuration can change at any time)
+    v_1_dev = "v1-dev"
 
 
 # -------------------------------------------------
@@ -110,30 +131,57 @@ class Version(str, Enum):
 # When adding new conf, use json.dumps() for      -
 # nested dict in query_params  (e.g V4)           -
 # -------------------------------------------------
+settings = Settings()
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
-    Version.DEV: ProcessingConfig(
-        description="Dummy backend for development",
-        upstream_url="http://localhost:9999/process",
-        authorized_api_key="client-dev-api-key",
-        query_params={"param_1": "value_1", "param_2": "value_2"},
-        custom_headers={"Authorization": "Bearer backend-dev-api-key"},
-    ),
-    Version.V1: ProcessingConfig(
-        description="Marker without llm",
-        upstream_url=settings.UPSTREAM_V1_URL,
-        authorized_api_key=settings.CLIENT_API_KEY_V1,
-        query_params={
-            "use_llm": False,
-            "force_ocr": True,
-            "strip_existing_ocr": True,
-            "output_format": "markdown",
+
+    Version.v_1_0_0: ProcessingConfig(
+        description="paddleocrvl_server (sans image description)",
+        upstream_url=settings.UPSTREAM_V100_URL,
+        authorized_api_key=settings.CLIENT_API_KEY_V100,
+        query_params={},
+        custom_headers={
+            "Content-Type": "application/octet-stream",
+            "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
         },
-        custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V1_API_KEY}"},
     ),
-    Version.V2: ProcessingConfig(
-        description="Marker with qwen3-vl and image description",
+
+    Version.v_1_1_0: ProcessingConfig(
+            description="paddleocrvl_server avec description image par ministral-3-3b",
+            upstream_url=settings.UPSTREAM_V110_URL,
+            authorized_api_key=settings.CLIENT_API_KEY_V110,
+            query_params={
+                "image_description_model_name": "ministral-3-3b",
+            },
+            custom_headers={
+                "Content-Type": "application/octet-stream",
+                "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
+            },
+        ),
+
+
+
+
+    # ALL VERSION ARE SUBJECT TO CHANGE - NOT FOR PRODUCTION USE
+
+
+    Version.v_1_dev: ProcessingConfig(
+        description="paddleocrvl_server (pour le dev)",
+        upstream_url="http://localhost:8081/v1/process",
+        authorized_api_key="changeme",
+        query_params={
+            "image_description_model_name": "dev_vlm"
+        },
+        custom_headers={
+            "Content-Type": "application/octet-stream",
+            "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
+        },
+    ),
+
+
+    Version.v_2_0_0: ProcessingConfig(
+        description="Marker native with qwen3-vl and image description",
         upstream_url=settings.UPSTREAM_V2_URL,
-        authorized_api_key=settings.CLIENT_API_KEY_V2,
+        authorized_api_key=settings.CLIENT_API_KEY_V200,
         query_params={
             "use_llm": "OpenAI",
             "llm_service": "marker.services.openai.OpenAIService",
@@ -149,16 +197,17 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             "openai_api_key": settings.UPSTREAM_V2_VLLM_API_KEY,
         },
     ),
-    Version.V3: ProcessingConfig(
+    Version.v_3_0_0: ProcessingConfig(
         description="Chandra",
         upstream_url=settings.UPSTREAM_V3_URL,
-        authorized_api_key=settings.CLIENT_API_KEY_V3,
+        authorized_api_key=settings.CLIENT_API_KEY_V300,
         custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V3_API_KEY}"},
     ),
-    Version.V4: ProcessingConfig(
+
+    Version.v_4_0_0: ProcessingConfig(
         description="Docling test",
         upstream_url=settings.UPSTREAM_V4_URL,
-        authorized_api_key=settings.CLIENT_API_KEY_V4,
+        authorized_api_key=settings.CLIENT_API_KEY_V400,
         query_params={
             # "from_formats": [...] default to all format
             "to_formats": ["md"],
@@ -206,12 +255,5 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         custom_headers={"X-Api-Key": settings.UPSTREAM_V4_API_KEY},
     ),
 
-    Version.V5 : ProcessingConfig(
-        description='PaddleOCR-VL-1.5, ocr basique dans les images (pas de description vlm)',
-        upstream_url=settings.UPSTREAM_V5_URL,
-        authorized_api_key=settings.CLIENT_API_KEY_V5,
-        query_params={},
-        custom_headers={'Authorization': f'Bearer {settings.UPSTREAM_V5_API_KEY}'}
-    )
 }
 
