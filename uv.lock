@@ -573,7 +573,7 @@ wheels = [
 
 [[package]]
 name = "markgate"
-version = "0.1.0"
+version = "0.1.1a0"
 source = { editable = "." }
 dependencies = [
     { name = "aioboto3" },

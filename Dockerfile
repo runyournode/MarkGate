@@ -1,10 +1,10 @@
 # Build with python3.14 on trixie
 # (match the tag with version in pyproject.toml)
-# `docker build -f docker/Dockerfile -t markgate:<tag> .`
+# from root folder:  `docker build -f Dockerfile -t markgate:<tag> .`
 
 FROM python:3.14-slim-trixie AS builder
 # Setup uv
-COPY --from=ghcr.io/astral-sh/uv:0.9.18-python3.14-trixie-slim /usr/local/bin/uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.10.6-python3.14-trixie-slim /usr/local/bin/uv /bin/uv
 # optionally config uv mirror repo
 
 WORKDIR /app
@@ -19,8 +19,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.14-slim-trixie
 
-ENV PATH="/app/.venv/bin:${PATH}"
 
+RUN groupadd -g 1000 app && \
+    useradd -u 1000 -g app -m -s /bin/bash app
+
+ENV PATH="/app/.venv/bin:${PATH}"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 RUN apt update \
     && apt upgrade \
@@ -30,13 +35,16 @@ RUN apt update \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/.venv /app/.venv
-#COPY README.md /app/
-COPY src/markgate/ /app/
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
+COPY --chown=app:app src/markgate/ /app/
+
+# Pre-compile bytecode
+RUN python -m compileall -q -f /app \
+    && chown -R app:app /app
 
 # Add uvicorn in path
 
-
+USER app
 WORKDIR /app
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0"]

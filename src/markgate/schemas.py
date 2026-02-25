@@ -1,8 +1,8 @@
 from datetime import datetime
 from urllib.parse import unquote
-from typing import Any, Annotated
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict, RootModel, SkipValidation, WithJsonSchema
+from pydantic import BaseModel, Field, ConfigDict, RootModel
 from PIL import Image
 
 
@@ -11,8 +11,17 @@ class ExternalDocumentRequestHeaders(BaseModel):
     Header received from the client (open-webui)
     """
 
-    content_type: str = Field(alias="Content-Type")  # mime-type
-    x_filename: str = Field(alias="X-Filename")  # filename
+    content_type: str = Field(
+        alias="Content-Type",
+        description="File MIME type (ex: application/pdf) or application/octet-stream",
+        examples=["application/octet-stream", "application/pdf"],
+    )
+    x_filename: str =  Field(
+        alias="X-Filename",
+        description="Original file name, **URL-encoded (quoted)** (ex: mon%20document.pdf)",
+        examples=["mon%20document.pdf", "%C3%A9tude%202024.pdf"],
+    )
+
     model_config = ConfigDict(populate_by_name=True)
 
     @property
@@ -71,11 +80,12 @@ class ResponseDocument(BaseModel):
 class ProcessedDocument(ResponseDocument):
     """
     Return for `call_upstream_backend` that process the response from the processing backend
+    (image are converted from b64 to PIL in `call_upstream_backend`)
     This is an intermediairia/internal format and not sent to the client
     :warning: As we are storing PIL images, it is not serializable !
     """
     page_content: str
-    images: dict[str, Image.Image]
+    images: dict[str, Image.Image] = {}
     metadata: Metadata | None = None
 
     # allows to have non serializable data

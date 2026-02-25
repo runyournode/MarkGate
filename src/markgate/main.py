@@ -19,7 +19,7 @@ from fastapi import (
 )
 
 from config import Version, settings
-from models import (
+from schemas import (
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
     ResponseDocument,
@@ -70,7 +70,7 @@ app: FastAPI = FastAPIOffline(
 <div align="center">
     <img src="/statics/markgate_banner.jpg" alt="MarkGate Banner" width="500" />
     </br>
-    <b>MarkGater</b>, a proxy for Markdown converter backends with persistent and versioned cache.
+    <b>MarkGate</b>, a proxy for Markdown converter backends with persistent and versioned cache.
 </div>
     """,
     favicon_url="/favicon.ico",
@@ -154,7 +154,10 @@ async def process_document(
                 logger.info(
                     f"RES [{version.value}] | CACHE HIT | Duration: {duration:.0f} ms | S3 Read: {s3_duration:.0f} ms | File: {filename}"
                 )
-                return ProcessedDocument(page_content=page_content, metadata=metadata)
+                return ResponseDocument(
+                    page_content=page_content,
+                    metadata=metadata,
+                )
             # Cache miss
             else:
                 logger.info(

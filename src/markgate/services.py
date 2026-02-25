@@ -3,14 +3,13 @@ from datetime import UTC, datetime
 from pathlib import Path as FilePath
 import hashlib
 import time
-from io import BytesIO
-import base64
+from urllib.parse import quote
 
 from PIL import Image
 import httpx
 
 from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
-from models import S3Metadata, S3FileAliases, ProcessedDocument, Metadata
+from schemas import S3Metadata, S3FileAliases, ProcessedDocument, Metadata
 from utils import (
     s3_manager,
     s3_put_content,
@@ -81,7 +80,8 @@ async def background_update_s3(
                     Key=source_key,
                     Body=content,
                     ContentType=content_type,
-                    Metadata={"original_name": filename},
+                    Metadata={"original_name": quote(filename)},
+                    ContentDisposition=f"attachment; filename*=UTF-8''{quote(filename)}",
                 )
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(

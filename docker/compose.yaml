@@ -1,11 +1,7 @@
 services:
   markgate:
-#    image: markgate:0.1.0
-    image: ghcr.io/runyournode/markgate:0.1.0-alpha
+    image: ghcr.io/runyournode/markgate:0.1.1-alpha
     container_name: markgate
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
     extra_hosts:  # si le S3 n'est pas dans la stack
       - "host.docker.internal:host-gateway"
     ports:

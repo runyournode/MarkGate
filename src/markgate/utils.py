@@ -105,7 +105,7 @@ async def s3_put_imgs(root_img_key: str, images: dict[str, Image.Image]):
         )
 
 async def s3_get_imgs(root_img_key: str):
-    NotImplementedError()
+    raise NotImplementedError("Getting Image from S3 is not implemented yet.")
 
 
 

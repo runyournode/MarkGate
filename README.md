@@ -3,7 +3,7 @@ MarkGate
 
 <img height="200" src="src/markgate/statics/markgate_banner.jpg" title="MarkGate Banner"/>  
 
-**MarkGater**, a proxy for Markdown converter backends with persistent and versioned cache.
+**MarkGate**, a proxy for Markdown converter backends with persistent and versioned cache.
 
 # Features
 
@@ -27,7 +27,7 @@ Use redis locks to avoid race condition.
   As a result we could result in `source.bin` `source.pdf` stored on the s3. See Todo: resolve mime-type
 
 # Dev status
- - Well tested for V5 config only
+ - Well tested for v1.0.0 and v1.1.0 config only (dockling (v4) was quicly tested).
  - docker/ define some docling and paddle server, do not use them in production
 
 
