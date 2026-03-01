@@ -23,7 +23,6 @@ FROM python:3.14-slim-trixie
 RUN groupadd -g 1000 app && \
     useradd -u 1000 -g app -m -s /bin/bash app
 
-ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
@@ -43,7 +42,9 @@ RUN python -m compileall -q -f /app \
     && chown -R app:app /app
 
 # Add uvicorn in path
+ENV PATH="/app/.venv/bin:${PATH}"
 
+# Running the app as non root
 USER app
 WORKDIR /app
 

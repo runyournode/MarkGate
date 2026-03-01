@@ -1,8 +1,10 @@
+import base64
+import io
 from datetime import datetime
 from urllib.parse import unquote
 from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict, RootModel
+from pydantic import BaseModel, Field, ConfigDict, RootModel, field_validator, field_serializer
 from PIL import Image
 
 
@@ -85,13 +87,52 @@ class ProcessedDocument(ResponseDocument):
     :warning: As we are storing PIL images, it is not serializable !
     """
     page_content: str
-    images: dict[str, Image.Image] = {}
+    images: dict[str, Image.Image] = Field(default_factory=dict)
     metadata: Metadata | None = None
 
-    # allows to have non serializable data
+    # allows to have non serializable data in the object (pil images)
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    # allow model_dump_json (or model_dump(mode='json')
+    @field_serializer("images", when_used="json")
+    def serialize_images(self, images: dict[str, Image.Image]):
+        result = {}
 
+        for key, img in images.items():
+            buffer = io.BytesIO()
+
+            # utilise le format original si connu, sinon PNG par défaut
+            format_ = img.format or "PNG"
+            img.save(buffer, format=format_)
+
+            result[key] = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        return result
+
+    # allow loading from a model_dump_json
+    @field_validator("images", mode="before")
+    @classmethod
+    def deserialize_images(cls, value):
+        if not value:
+            return {}
+
+        result = {}
+
+        for key, img_data in value.items():
+            if isinstance(img_data, Image.Image):
+                result[key] = img_data
+                continue
+
+            img_bytes = base64.b64decode(img_data)
+            buffer = io.BytesIO(img_bytes)
+
+            img = Image.open(buffer)
+            img.load()  # important
+            buffer.close()
+
+            result[key] = img
+
+        return result
 
 
 # Response of this proxy to the client

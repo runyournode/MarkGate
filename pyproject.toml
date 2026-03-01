@@ -1,6 +1,6 @@
 [project]
 name = "markgate"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 description = "Proxy between open-webui and document to text conversion backends with versioned and persistant cache management."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"

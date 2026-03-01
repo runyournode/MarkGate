@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Keys that clients (e.g. Open WebUI) must provide to use this proxy
     CLIENT_API_KEY_V100: str = "changeme"
     CLIENT_API_KEY_V110: str = "changeme"
+    CLIENT_API_KEY_V120: str = "changeme"
 
     CLIENT_API_KEY_V200: str = "changeme"
     CLIENT_API_KEY_V300: str = "changeme"
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     UPSTREAM_V110_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V110_API_KEY: str = "changeme"  # Key for the V1 backend
 
+    # V1: paddleocrvl_server + ministral-3-14b
+    UPSTREAM_V120_URL: str = "http://localhost:8081/v1/process"
+    UPSTREAM_V120_API_KEY: str = "changeme"  # Key for the V1 backend
 
     # V2: Marker with qwen3-vl and image description
     UPSTREAM_V2_URL: str = "http://localhost:9001/process"
@@ -108,7 +112,7 @@ class Version(str, Enum):
 
     v_1_0_0 = "v1.0.0"
     v_1_1_0 = "v1.1.0" # + ministral-3-3b
-
+    v_1_2_0 = "v1.2.0"  # + ministral-3-14b
 
     # Marker
     v_2_0_0 = "v2.0.0"
@@ -158,6 +162,18 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             },
         ),
 
+    Version.v_1_2_0: ProcessingConfig(
+                description="paddleocrvl_server avec description image par ministral-3-3b",
+                upstream_url=settings.UPSTREAM_V120_URL,
+                authorized_api_key=settings.CLIENT_API_KEY_V120,
+                query_params={
+                    "image_description_model_name": "ministral-3-14b",
+                },
+                custom_headers={
+                    "Content-Type": "application/octet-stream",
+                    "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
+                },
+            ),
 
 
 

@@ -107,6 +107,9 @@ async def background_update_s3(
 
             # Create / Update _metadata file
             if await s3_key_exists(meta_key):
+                logger.debug(
+                    f"BG [{version.value}] | Updating _metadata | Hash: {file_hash}"
+                )
                 meta = await s3_get_pydantic(meta_key, S3Metadata)
                 meta.last_hit_at = now
                 meta.hit_count += 1
@@ -162,7 +165,7 @@ async def call_upstream_backend(
         #     headers.update(config.custom_headers)
         match version:
             case ( # routage vers paddleocrvl_server
-                Version.v_1_0_0 | Version.v_1_1_0
+                Version.v_1_0_0 | Version.v_1_1_0 | Version.v_1_2_0
             ):
                 resp = await async_client.post(
                     url=config.upstream_url,
@@ -177,13 +180,16 @@ async def call_upstream_backend(
                 page_content = data.get("page_content", "")
                 imgs: dict[str, str] = data.get("images", {})
 
+                # Get metadata from upstream processor (processing time, ...)
+                meta = data.get("metadata", {})
+
                 # Convert to pil
                 imgs: dict[str, Image.Image] = {name: base64_to_pil(img) for name, img in imgs.items()}
 
                 return ProcessedDocument(
                     page_content=page_content,
                     images=imgs,
-                    metadata=Metadata(), # empty for paddleocrvl_server
+                    metadata=Metadata(meta), # empty for paddleocrvl_server
                 )
 
 

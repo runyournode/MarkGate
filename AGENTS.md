@@ -211,4 +211,6 @@ class ExternalDocumentLoader(BaseLoader):
             )
 ```
 
+How metadata are managed inside Open-webui : [deepwiki chat](https://deepwiki.com/search/how-are-are-used-metadata-when_f3f8ce5b-e56a-450f-8b88-73787ecc6379?mode=deep)
+
 ---
