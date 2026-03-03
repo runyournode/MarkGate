@@ -27,7 +27,7 @@ Use redis locks to avoid race condition.
   As a result we could result in `source.bin` `source.pdf` stored on the s3. See Todo: resolve mime-type
 
 # Dev status
- - Well tested for v1.0.0 and v1.1.0 config only (dockling (v4) was quicly tested).
+ - Well tested for v1.0.0 and v1.1.0 config only (docling (v4) was quicly tested).
  - docker/ define some docling and paddle server, do not use them in production
 
 

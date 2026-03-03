@@ -18,7 +18,7 @@ In this figure, a bar chart titled "Fruit Preference Survey" is showing the numb
 
 class Settings(BaseSettings):
     """
-    GLOBAL CONFIG FOR THE PROXY
+    GLOBAL CONFIG FOR THE GATEAWAY
     """
 
     LOG_LEVEL: str = "INFO"
@@ -36,10 +36,11 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
 
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
-    # Keys that clients (e.g. Open WebUI) must provide to use this proxy
+    # Keys that clients (e.g. Open WebUI) must provide to use this gateway
     CLIENT_API_KEY_V100: str = "changeme"
     CLIENT_API_KEY_V110: str = "changeme"
     CLIENT_API_KEY_V120: str = "changeme"
+    CLIENT_API_KEY_V130: str = "changeme"
 
     CLIENT_API_KEY_V200: str = "changeme"
     CLIENT_API_KEY_V300: str = "changeme"
@@ -59,6 +60,12 @@ class Settings(BaseSettings):
     # V1: paddleocrvl_server + ministral-3-14b
     UPSTREAM_V120_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V120_API_KEY: str = "changeme"  # Key for the V1 backend
+
+    # V1: paddleocrvl_server + GLM-4.6V-Flash
+    UPSTREAM_V130_URL: str = "http://localhost:8081/v1/process"
+    UPSTREAM_V130_API_KEY: str = "changeme"  # Key for the V1 backend
+
+
 
     # V2: Marker with qwen3-vl and image description
     UPSTREAM_V2_URL: str = "http://localhost:9001/process"
@@ -109,10 +116,10 @@ class Version(str, Enum):
     """
 
     # Padlle
-
     v_1_0_0 = "v1.0.0"
-    v_1_1_0 = "v1.1.0" # + ministral-3-3b
+    v_1_1_0 = "v1.1.0"  # + ministral-3-3b
     v_1_2_0 = "v1.2.0"  # + ministral-3-14b
+    v_1_3_0 = "v1.3.0"   # + GLM-4.6V-Flash
 
     # Marker
     v_2_0_0 = "v2.0.0"
@@ -163,7 +170,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         ),
 
     Version.v_1_2_0: ProcessingConfig(
-                description="paddleocrvl_server avec description image par ministral-3-3b",
+                description="paddleocrvl_server avec description image par ministral-3-14b",
                 upstream_url=settings.UPSTREAM_V120_URL,
                 authorized_api_key=settings.CLIENT_API_KEY_V120,
                 query_params={
@@ -171,9 +178,22 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
                 },
                 custom_headers={
                     "Content-Type": "application/octet-stream",
-                    "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
+                    "Authorization": f"Bearer {settings.UPSTREAM_V120_API_KEY}",
                 },
             ),
+
+    Version.v_1_3_0: ProcessingConfig(
+                    description="paddleocrvl_server avec description image par GLM-4.6V-Flash",
+                    upstream_url=settings.UPSTREAM_V130_URL,
+                    authorized_api_key=settings.CLIENT_API_KEY_V130,
+                    query_params={
+                        "image_description_model_name": "GLM-4.6V-Flash",
+                    },
+                    custom_headers={
+                        "Content-Type": "application/octet-stream",
+                        "Authorization": f"Bearer {settings.UPSTREAM_V130_API_KEY}",
+                    },
+                ),
 
 
 
