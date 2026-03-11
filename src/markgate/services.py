@@ -62,10 +62,14 @@ async def background_update_s3(
 
     async with (
         redis_manager.client.lock(
-            lock_name_unversioned, timeout=600, blocking_timeout=20
+            lock_name_unversioned,
+            timeout=settings.REDIS_LOCK_TIMEOUT,
+            blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
         ),
         redis_manager.client.lock(
-            lock_name_versioned, timeout=600, blocking_timeout=20
+            lock_name_versioned,
+            timeout=settings.REDIS_LOCK_TIMEOUT,
+            blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
         ),
     ):
         try:
@@ -155,7 +159,7 @@ async def update_s3_processed(
 async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
-    async with httpx.AsyncClient(timeout=300.0) as async_client:
+    async with httpx.AsyncClient(timeout=settings.UPSTREAM_TIMEOUT) as async_client:
     # with httpx.Client(timeout=300.0) as client:
         # Get the config
         config: ProcessingConfig = VERSION_CONFIGS[version]

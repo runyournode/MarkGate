@@ -34,6 +34,12 @@ class Settings(BaseSettings):
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+    REDIS_SOCKET_TIMEOUT: float = 5.0 # shouldn't be edited
+
+    # Timeout des traitement
+    REDIS_LOCK_TIMEOUT: int = 9999999
+    REDIS_BLOCKING_TIMEOUT: int = 9999999
+    UPSTREAM_TIMEOUT: float = 9999999
 
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
     # Keys that clients (e.g. Open WebUI) must provide to use this gateway
@@ -292,4 +298,3 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
     ),
 
 }
-

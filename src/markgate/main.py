@@ -134,7 +134,11 @@ async def process_document(
     )
 
 
-    async with redis_manager.client.lock(lock_name, timeout=600, blocking_timeout=20):
+    async with redis_manager.client.lock(
+        lock_name,
+        timeout=settings.REDIS_LOCK_TIMEOUT,
+        blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
+    ):
         try:
             # Cache hit
             # if False:

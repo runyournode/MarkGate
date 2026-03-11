@@ -177,7 +177,7 @@ async def lifespan(_app: FastAPI):
             port=settings.REDIS_PORT,
             db=0,
             decode_responses=True,  # Très pratique pour avoir des str au lieu de bytes
-            socket_timeout=5.0,
+            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
         ) as redis_c,
     ):
         s3_manager.client = s3_c
