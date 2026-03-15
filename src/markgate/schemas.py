@@ -27,8 +27,8 @@ class ExternalDocumentRequestHeaders(BaseModel):
     )
     x_filename: str = Field(
         alias="X-Filename",
-        description="Original file name, **URL-encoded (quoted)** (ex: mon%20document.pdf)",
-        examples=["mon%20document.pdf", "%C3%A9tude%202024.pdf"],
+        description="Original file name, **URL-encoded (quoted)** (ex: my%20document.pdf)",
+        examples=["my%20document.pdf", "%C3%A9tude%202024.pdf"],
     )
 
     model_config = ConfigDict(populate_by_name=True)
@@ -68,16 +68,6 @@ class Metadata(RootModel[dict[str, Any]]):
     root: dict[str, Any] = {}
 
 
-# On crée un alias de type pour clarifier le code
-# SkipValidation évite que Pydantic essaie de valider l'objet au runtime
-# WithJsonSchema empêche le crash de /docs en simulant un type connu
-# PillowImage = Annotated[
-#     Image.Image,
-#     SkipValidation,
-#     WithJsonSchema({"type": "string", "description": "PIL Image object (internal use only)"})
-# ]
-
-
 class ResponseDocument(BaseModel):
     """
     Response from this proxy/gateway
@@ -89,11 +79,10 @@ class ResponseDocument(BaseModel):
 
 
 class ProcessedDocument(ResponseDocument):
-    """
-    Return for `call_upstream_backend` that process the response from the processing backend
-    (image are converted from b64 to PIL in `call_upstream_backend`)
-    This is an intermediairia/internal format and not sent to the client
-    :warning: As we are storing PIL images, it is not serializable !
+    """Internal representation returned by `call_upstream_backend`.
+
+    Images are decoded from base64 to PIL inside `call_upstream_backend`.
+    Not sent to the client. Not JSON-serializable due to PIL Image objects.
     """
 
     page_content: str
@@ -111,7 +100,7 @@ class ProcessedDocument(ResponseDocument):
         for key, img in images.items():
             buffer = io.BytesIO()
 
-            # utilise le format original si connu, sinon PNG par défaut
+            # use original format if known, default to PNG
             format_ = img.format or "PNG"
             img.save(buffer, format=format_)
 

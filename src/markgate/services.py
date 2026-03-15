@@ -1,24 +1,28 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
 import hashlib
-import time
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
-from PIL import Image
 import httpx
+import redis
+from fastapi import BackgroundTasks, HTTPException
+from PIL import Image
 
 from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
+from media import batch_b64_to_pil, get_mime_type, mime_to_ext
 from schemas import (
     S3Metadata,
     S3FileAliases,
+    ExternalDocumentRequestHeaders,
     ProcessedDocument,
     Metadata,
     FailedRequestInfo,
 )
-from utils import (
+from storage import (
     s3_manager,
     s3_is_active,
     s3_put_content,
@@ -28,23 +32,57 @@ from utils import (
     s3_get_pydantic,
     s3_put_pydantic,
     redis_manager,
-    get_mime_type,
-    base64_to_pil,
 )
 
 logger = logging.getLogger("markgate")
 
 
+# ---------------------------------------------------------------------------
+# Key builders — single source of truth for all S3 paths and Redis lock names
+# ---------------------------------------------------------------------------
+
+
 def compute_hash(content: bytes) -> str:
+    """Return the SHA-256 hex digest of the given bytes."""
     return hashlib.sha256(content).hexdigest()
 
 
-def get_extension(filename: str) -> str:
-    return FilePath(filename).suffix.lower()
-
-
 def get_lock_name(file_hash: str, version: Version) -> str:
-    return f"lock:{file_hash}:{version.value}"
+    """Return the Redis lock key for a given file hash and version."""
+    return f"lock:processing:{file_hash}:{version.value}"
+
+
+def build_s3_keys(file_hash: str, version: Version) -> tuple[str, str, str, str]:
+    """Returns (s3_root_key, s3_content_key, s3_metadata_key, s3_imgs_key).
+
+    s3_root_key     : documents/{hash}/{version}
+    s3_content_key  : documents/{hash}/{version}/content.md
+    s3_metadata_key : documents/{hash}/{version}/metadata.json   (backend metadata)
+    s3_imgs_key     : documents/{hash}/{version}/images
+    """
+    root = f"documents/{file_hash}/{version.value}"
+    return root, f"{root}/content.md", f"{root}/metadata.json", f"{root}/images"
+
+
+def build_s3_bg_keys(
+    file_hash: str, version: Version, mime: str
+) -> tuple[str, str, str]:
+    """Returns (source_key, alias_key, cache_meta_key) for background S3 updates.
+
+    source_key      : documents/{hash}/source.{ext}   (ext derived from detected MIME type)
+    alias_key       : documents/{hash}/_aliases.json
+    cache_meta_key  : documents/{hash}/{version}/_metadata.json  (cache hit metadata)
+    """
+    ext = mime_to_ext(mime)
+    source_key = f"documents/{file_hash}/source{ext}"
+    alias_key = f"documents/{file_hash}/_aliases.json"
+    cache_meta_key = f"documents/{file_hash}/{version.value}/_metadata.json"
+    return source_key, alias_key, cache_meta_key
+
+
+# ---------------------------------------------------------------------------
+# S3 background update (source file, aliases, cache hit metadata)
+# ---------------------------------------------------------------------------
 
 
 async def background_update_s3(
@@ -52,21 +90,19 @@ async def background_update_s3(
     version: Version,
     filename: str,
     content: bytes,
-    content_type: str | None,
+    mime: str,
 ) -> None:
-    """
-    Upload / Update file source, _aliases.json and _metadata.json on S3
-    Processed document is out of scope (see update_s3_processed)
-    This function includes a double lock :
+    """Upload / update source file, _aliases.json and _metadata.json on S3.
+
+    Processed document is out of scope (see update_s3_processed).
+    This function includes a double lock:
      - Depending on the hashfile
      - Depending on the hashfile + version
     """
     if not settings.S3_CACHE_ENABLED:
         return
-    ext: str = get_extension(filename) or ".bin"
-    source_key: str = f"documents/{file_hash}/source{ext}"
-    alias_key: str = f"documents/{file_hash}/_aliases.json"
-    meta_key: str = f"documents/{file_hash}/{version.value}/_metadata.json"
+
+    source_key, alias_key, cache_meta_key = build_s3_bg_keys(file_hash, version, mime)
     now: datetime = datetime.now(tz=UTC)
 
     lock_name_unversioned: str = f"lock:uploading_source_file:{file_hash}"
@@ -84,8 +120,10 @@ async def background_update_s3(
             blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
         ),
     ):
+        step = "unknown"
         try:
             # Upload source file to S3 if new hash
+            step = "source upload"
             if not await s3_key_exists(source_key):
                 start_time = time.perf_counter()
                 logger.info(
@@ -95,7 +133,7 @@ async def background_update_s3(
                     Bucket=settings.S3_BUCKET,
                     Key=source_key,
                     Body=content,
-                    ContentType=content_type,
+                    ContentType=mime,
                     Metadata={"original_name": quote(filename)},
                     ContentDisposition=f"attachment; filename*=UTF-8''{quote(filename)}",
                 )
@@ -105,6 +143,7 @@ async def background_update_s3(
                 )
 
             # Create / Update _aliases file
+            step = "aliases update"
             if await s3_key_exists(alias_key):
                 aliases = await s3_get_pydantic(alias_key, S3FileAliases)
 
@@ -122,11 +161,12 @@ async def background_update_s3(
                 await s3_put_pydantic(alias_key, new_aliases)
 
             # Create / Update _metadata file
-            if await s3_key_exists(meta_key):
+            step = "_metadata update"
+            if await s3_key_exists(cache_meta_key):
                 logger.debug(
                     f"BG [{version.value}] | Updating _metadata | Hash: {file_hash}"
                 )
-                meta = await s3_get_pydantic(meta_key, S3Metadata)
+                meta = await s3_get_pydantic(cache_meta_key, S3Metadata)
                 meta.last_hit_at = now
                 meta.hit_count += 1
                 meta.last_filename_used = filename
@@ -141,11 +181,11 @@ async def background_update_s3(
                     hit_count=1,
                     last_filename_used=filename,
                 )
-            await s3_put_pydantic(meta_key, meta)
+            await s3_put_pydantic(cache_meta_key, meta)
 
         except Exception as e:
             logger.error(
-                f"BG [{version.value}] | ERROR | Hash: {file_hash} | Error: {e}"
+                f"BG [{version.value}] | ERROR during {step} | Hash: {file_hash} | File: {filename} | Error: {e}"
             )
 
 
@@ -154,11 +194,10 @@ async def update_s3_processed(
     s3_content_key: str,
     s3_metadata_key: str,
     s3_imgs_key: str,
-):
-    """
-    Upload the processed document: md extraction, metadata (from backend processor) and optionnaly images
-    This function should always be directly executed in the route (not a background task)
-     and called within a lock depending on the hashfile + version
+) -> None:
+    """Upload the processed document (Markdown, metadata, images) to S3.
+
+    Must be called within the versioned Redis lock, not as a background task.
     """
     await s3_put_content(s3_content_key, processed_document.page_content)
     # metadata and images are optional
@@ -166,6 +205,11 @@ async def update_s3_processed(
         await s3_put_pydantic(s3_metadata_key, processed_document.metadata)
     if processed_document.images:
         await s3_put_imgs(s3_imgs_key, processed_document.images)
+
+
+# ---------------------------------------------------------------------------
+# Failed request archiving
+# ---------------------------------------------------------------------------
 
 
 async def save_failed_request(
@@ -181,7 +225,8 @@ async def save_failed_request(
     """
     now = datetime.now(tz=UTC)
     prefix = f"{settings.FAILED_REQUESTS_S3_PREFIX}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
-    ext = get_extension(filename) or ".bin"
+    mime = await asyncio.to_thread(get_mime_type, file_content)
+    ext = mime_to_ext(mime)
     info = FailedRequestInfo(
         timestamp=now,
         version=version.value,
@@ -197,7 +242,7 @@ async def save_failed_request(
                 Bucket=settings.S3_BUCKET,
                 Key=f"{prefix}/source{ext}",
                 Body=file_content,
-                ContentType="application/octet-stream",
+                ContentType=mime,
             )
             await s3_put_pydantic(f"{prefix}/error.json", info)
             logger.info(
@@ -228,6 +273,23 @@ async def save_failed_request(
         )
 
 
+# ---------------------------------------------------------------------------
+# Core document resolution (cache or upstream)
+# ---------------------------------------------------------------------------
+
+
+async def _keep_lock_alive(lock, interval: float) -> None:
+    """Extend the lock TTL periodically to prevent expiration during long upstream calls.
+    Runs until canceled. Stops silently if the lock is already lost.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await lock.extend(lock.timeout, replace_ttl=True)
+        except Exception:
+            return
+
+
 async def _resolve_document(
     version: Version,
     file_hash: str,
@@ -246,11 +308,13 @@ async def _resolve_document(
     On cache hit, ProcessedDocument.images is always empty — use s3_get_imgs() if images are needed.
     On upstream failure, saves artifacts to failed_requests/ in S3 then re-raises.
     """
-    async with redis_manager.client.lock(
+    lock = redis_manager.client.lock(
         lock_name,
         timeout=settings.REDIS_LOCK_TIMEOUT,
         blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
-    ):
+        raise_on_release_error=False,
+    )
+    async with lock:
         s3_ok = s3_is_active()
 
         if s3_ok and not force_reprocess:
@@ -265,14 +329,14 @@ async def _resolve_document(
                     )
                     s3_duration = (time.perf_counter() - s3_start) * 1000
                     logger.info(
-                        f"RES [{version.value}] | CACHE HIT | S3 Read: {s3_duration:.0f} ms | File: {filename}"
+                        f"CACHE [{version.value}] | HIT | S3 read: {s3_duration:.0f} ms | File: {filename}"
                     )
                     return ProcessedDocument(
                         page_content=page_content, metadata=metadata, images={}
                     ), True
             except Exception as e:
                 logger.warning(
-                    f"RES [{version.value}] | S3 read failed, bypassing cache: {e} | File: {filename}"
+                    f"CACHE [{version.value}] | READ ERROR - bypassing cache | File: {filename} | Error: {e}"
                 )
                 s3_ok = False
 
@@ -285,10 +349,12 @@ async def _resolve_document(
         else:
             log_prefix = "CACHE MISS"
         logger.info(
-            f"PRC [{version.value}] | {log_prefix} | PROCESSING UPSTREAM | File: {filename}"
+            f"PROC [{version.value}] | {log_prefix} | Calling upstream backend | File: {filename}"
         )
 
         upstream_start = time.perf_counter()
+        extend_interval = max(10.0, settings.REDIS_LOCK_TIMEOUT / 2)
+        extender = asyncio.create_task(_keep_lock_alive(lock, extend_interval))
         try:
             processed_document = await call_upstream_backend(
                 version=version,
@@ -309,45 +375,78 @@ async def _resolve_document(
                 )
             )
             raise
+        finally:
+            extender.cancel()
+            try:
+                await extender
+            except asyncio.CancelledError:
+                pass
 
         upstream_duration = (time.perf_counter() - upstream_start) * 1000
 
-        if s3_ok:
+        if not s3_ok:
+            logger.warning(
+                f"CACHE [{version.value}] | WRITE SKIPPED - S3 unreachable (read failed earlier) - result not cached | File: {filename}"
+            )
+        else:
             try:
                 await update_s3_processed(
                     processed_document, s3_content_key, s3_metadata_key, s3_imgs_key
                 )
             except Exception as e:
                 logger.warning(
-                    f"RES [{version.value}] | S3 write failed, result not cached: {e} | File: {filename}"
+                    f"CACHE [{version.value}] | WRITE ERROR - result not cached | File: {filename} | Error: {e}"
                 )
 
         logger.info(
-            f"RES [{version.value}] | UPSTREAM OK | Upstream: {upstream_duration:.0f} ms | File: {filename}"
+            f"PROC [{version.value}] | OK | Upstream: {upstream_duration:.0f} ms | File: {filename}"
         )
         return processed_document, False
+
+
+# ---------------------------------------------------------------------------
+# Upstream backend call
+# ---------------------------------------------------------------------------
+
+# Headers sent by the client that must never be forwarded to upstream backends.
+# The backend uses its own credentials (defined in ProcessingConfig.custom_headers).
+_CLIENT_HEADERS_BLOCKLIST: frozenset[str] = frozenset({"authorization"})
+
+
+def _merge_headers(
+    upstream_headers: dict[str, str], custom_headers: dict[str, str]
+) -> dict[str, str]:
+    """Build the consolidated headers dict to send to the upstream backend.
+
+    - Client authentication headers (blocklist) are stripped from upstream_headers.
+    - custom_headers (config) wins on any key conflict.
+    """
+    filtered = {
+        k: v
+        for k, v in upstream_headers.items()
+        if k.lower() not in _CLIENT_HEADERS_BLOCKLIST
+    }
+    return {**filtered, **custom_headers}
 
 
 async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
-    async with httpx.AsyncClient(timeout=settings.UPSTREAM_TIMEOUT) as async_client:
-        # with httpx.Client(timeout=300.0) as client:
-        # Get the config
-        config: ProcessingConfig = VERSION_CONFIGS[version]
+    """Send the file to the appropriate upstream backend and return a ProcessedDocument.
 
-        # add more headers from config (e.g. secret key)
-        # if config.custom_headers:  # api key(s) for the backend
-        #     headers.update(config.custom_headers)
+    Routing is version-based. Raises on non-2xx HTTP status or empty page_content.
+    """
+    async with httpx.AsyncClient(timeout=settings.UPSTREAM_TIMEOUT) as async_client:
+        config: ProcessingConfig = VERSION_CONFIGS[version]
         match version:
-            case (  # routage vers foil-serve
+            case (  # route to foil-serve
                 Version.v_1_0_0 | Version.v_1_1_0 | Version.v_1_2_0
             ):
                 resp = await async_client.post(
                     url=config.upstream_url,
                     content=file_content,
-                    params=config.query_params,  # {} pour v1
-                    headers=config.custom_headers,
+                    params=config.query_params,
+                    headers=_merge_headers(headers, config.custom_headers),
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -359,15 +458,15 @@ async def call_upstream_backend(
                         f"Upstream returned empty page_content. Full response: {data}"
                     )
 
-                imgs: dict[str, str] = data.get("images", {})
+                imgs_b64: dict[str, str] = data.get("images", {})
 
                 # Get metadata from upstream processor (processing time, ...)
                 meta = data.get("metadata", {})
 
-                # Convert to pil
-                imgs: dict[str, Image.Image] = {
-                    name: base64_to_pil(img) for name, img in imgs.items()
-                }
+                # Decode base64 images to PIL in a thread (CPU-bound)
+                imgs: dict[str, Image.Image] = await asyncio.to_thread(
+                    batch_b64_to_pil, imgs_b64
+                )
 
                 return ProcessedDocument(
                     page_content=page_content,
@@ -375,14 +474,16 @@ async def call_upstream_backend(
                     metadata=Metadata(meta),
                 )
 
-            case Version.v_4_0_0:  # routage vers docling
-                # files = {"files": (filename, file_content, headers["Content-Type"])}
-
-                content_type = headers["Content-Type"]
-                if content_type == "application/octet-stream":
-                    content_type = get_mime_type(file_content)
-
-                files = {"files": (filename, file_content, content_type)}
+            case Version.v_4_0_0:  # route to docling
+                merged = _merge_headers(headers, config.custom_headers)
+                # Content-Type in the files tuple sets the MIME of the uploaded part.
+                # It must NOT appear in the request-level headers: httpx sets
+                # Content-Type: multipart/form-data; boundary=... automatically and
+                # an explicit override would break the boundary declaration.
+                files = {"files": (filename, file_content, merged["Content-Type"])}
+                request_headers = {
+                    k: v for k, v in merged.items() if k.lower() != "content-type"
+                }
 
                 # debug
                 # url = "http://localhost:5001/v1/convert/file"
@@ -417,7 +518,7 @@ async def call_upstream_backend(
                     url=config.upstream_url,
                     files=files,
                     data=form_data,
-                    headers=config.custom_headers,
+                    headers=request_headers,
                 )
                 resp.raise_for_status()
 
@@ -440,3 +541,125 @@ async def call_upstream_backend(
             case _:
                 # Standard PUT for other backends (Marker, etc.)
                 raise NotImplementedError()
+
+
+# ---------------------------------------------------------------------------
+# Shared request preamble (used by both process routes in main.py)
+# ---------------------------------------------------------------------------
+
+
+async def resolve_request(
+    headers_data: ExternalDocumentRequestHeaders,
+    version: Version,
+    background_tasks: BackgroundTasks,
+    api_key: str,
+    file_content: bytes,
+    force_reprocess: bool,
+    route: str = "",
+) -> tuple[ProcessedDocument, bool, str, str, str, float]:
+    """Shared preamble for both process routes.
+
+    Computes the hash, logs the incoming request, schedules the S3 background
+    update, and resolves the document (cache or upstream).
+
+    Returns (processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time).
+    Raises HTTPException on lock timeout (504) or upstream failure (502).
+    """
+    start_time = time.perf_counter()
+
+    file_hash, mime = await asyncio.gather(
+        asyncio.to_thread(compute_hash, file_content),
+        asyncio.to_thread(get_mime_type, file_content),
+    )
+    filename = headers_data.filename
+
+    label = f" | {route}" if route else ""
+    logger.info(
+        f"REQ [{version.value}]{label} | File: {filename} | Hash: {file_hash} | MIME: {mime} | ClientKey: {api_key[:4]}***"
+    )
+
+    _, s3_content_key, s3_metadata_key, s3_imgs_key = build_s3_keys(file_hash, version)
+    lock_name = get_lock_name(file_hash, version)
+
+    if s3_is_active():
+        background_tasks.add_task(
+            background_update_s3,
+            file_hash,
+            version,
+            filename,
+            file_content,
+            mime,
+        )
+
+    try:
+        processed_document, from_cache = await _resolve_document(
+            version=version,
+            file_hash=file_hash,
+            filename=filename,
+            file_content=file_content,
+            upstream_headers={
+                "Content-Type": mime,
+                "X-Filename": headers_data.x_filename,
+            },
+            s3_content_key=s3_content_key,
+            s3_metadata_key=s3_metadata_key,
+            s3_imgs_key=s3_imgs_key,
+            lock_name=lock_name,
+            force_reprocess=force_reprocess,
+        )
+    except redis.exceptions.LockError:
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.error(
+            f"LOCK [{version.value}]{label} | TIMEOUT | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"[{version.value}] Lock timeout while processing '{filename}'. The file may already be queued — retry shortly.",
+        )
+    except Exception as e:
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.error(
+            f"PROC [{version.value}]{label} | UPSTREAM FAIL | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms | Error: {e}"
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"[{version.value}] Upstream processing failed for '{filename}': {str(e)}",
+        )
+
+    return processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time
+
+
+# ---------------------------------------------------------------------------
+# Health check helpers
+# ---------------------------------------------------------------------------
+
+
+async def check_backends_health() -> dict[str, tuple[str, str | None]]:
+    """Probe all upstream backends. Deduplicates by base URL.
+    Returns {version_value: (status, message|None)}.
+    status: 'ok' | 'degraded' | 'unhealthy'
+    """
+    base_url_to_versions: dict[str, list[str]] = {}
+    for ver, cfg in VERSION_CONFIGS.items():
+        parsed = urlparse(cfg.upstream_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        base_url_to_versions.setdefault(base, []).append(ver.value)
+
+    base_results: dict[str, tuple[str, str | None]] = {}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for base_url in base_url_to_versions:
+            try:
+                resp = await client.get(f"{base_url}/health")
+                if resp.is_success:
+                    base_results[base_url] = ("ok", None)
+                else:
+                    base_results[base_url] = ("degraded", f"HTTP {resp.status_code}")
+            except Exception as e:
+                base_results[base_url] = ("unhealthy", str(e))
+
+    result: dict[str, tuple[str, str | None]] = {}
+    for ver, cfg in VERSION_CONFIGS.items():
+        parsed = urlparse(cfg.upstream_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        result[ver.value] = base_results[base]
+    return result

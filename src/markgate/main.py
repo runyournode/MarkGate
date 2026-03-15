@@ -1,28 +1,24 @@
-import logging
 import time
-from collections.abc import Awaitable
+import asyncio
+import logging
 from logging.handlers import RotatingFileHandler
-from typing import Annotated
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Annotated
 
-import httpx
-import redis
-from fastapi_offline import FastAPIOffline
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi import (
-    FastAPI,
     BackgroundTasks,
     Body,
     Depends,
     Header,
-    HTTPException,
     Query,
-    Request,
 )
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi_offline import FastAPIOffline
 
-from config import Version, VERSION_CONFIGS, settings
+from config import settings
+from media import build_tar_zst, batch_pil_to_bytes
 from schemas import (
     ExternalDocumentRequestHeaders,
     ResponseDocument,
@@ -30,22 +26,10 @@ from schemas import (
     ServiceHealth,
     DependenciesHealth,
 )
-from services import (
-    background_update_s3,
-    compute_hash,
-    get_lock_name,
-    _resolve_document,
-)
-from utils import (
-    lifespan,
-    verify_api_key,
-    s3_get_imgs,
-    s3_is_active,
-    check_s3_health,
-    build_tar_zst,
-    pil_to_bytes,
-    redis_manager,
-)
+from security import verify_api_key
+from services import check_backends_health, resolve_request
+from storage import check_redis_health, check_s3_health, lifespan, s3_get_imgs
+from config import Version
 
 # --- Logging Configuration ---
 logger = logging.getLogger("markgate")
@@ -54,12 +38,10 @@ formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-# Console Handler
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# File Handler (Optional)
 if settings.LOG_FILE:
     file_handler = RotatingFileHandler(
         settings.LOG_FILE,
@@ -86,24 +68,9 @@ STATICS_DIR: Path = Path(__file__).resolve().parent / "statics"
 app.mount("/statics", StaticFiles(directory=STATICS_DIR), name="statics")
 
 
-# --- Global Exception Handler ---
-@app.exception_handler(HTTPException)
-async def http_exception_handler(_request: Request, exc: HTTPException):
-    if exc.status_code >= 500:
-        logger.error(f"HTTP {exc.status_code} | {exc.detail}")
-    else:
-        logger.warning(f"HTTP {exc.status_code} | {exc.detail}")
-
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-    )
-
-
-def _build_s3_keys(file_hash: str, version: Version) -> tuple[str, str, str, str]:
-    """Returns (s3_root_key, s3_content_key, s3_metadata_key, s3_imgs_key)."""
-    root = f"documents/{file_hash}/{version.value}"
-    return root, f"{root}/content.md", f"{root}/metadata.json", f"{root}/images"
+# ---------------------------------------------------------------------------
+# Process routes
+# ---------------------------------------------------------------------------
 
 
 @app.put(
@@ -118,59 +85,13 @@ async def process_document(
     file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
     force_reprocess: bool = Query(False),
 ) -> ProxyOutput | dict:
-    start_time = time.perf_counter()
-
-    file_hash = compute_hash(file_content)
-    filename = headers_data.filename  # human-readable filename, cannot be passed as header, use headers_data.x_filename
-
-    logger.info(
-        f"REQ [{version.value}] | File: {filename} | Hash: {file_hash} | ClientKey: {api_key[:4]}***"
+    """Convert a document to Markdown. Returns page_content and metadata."""
+    processed_document, _, filename, _, _, start_time = await resolve_request(
+        headers_data, version, background_tasks, api_key, file_content, force_reprocess
     )
 
-    _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
-    lock_name = get_lock_name(file_hash, version)
-
-    if s3_is_active():
-        background_tasks.add_task(
-            background_update_s3,
-            file_hash,
-            version,
-            filename,
-            file_content,
-            headers_data.content_type,
-        )
-
-    try:
-        processed_document, _ = await _resolve_document(
-            version=version,
-            file_hash=file_hash,
-            filename=filename,
-            file_content=file_content,
-            upstream_headers={
-                "Content-Type": headers_data.content_type,
-                "X-Filename": headers_data.x_filename,
-            },
-            s3_content_key=s3_content_key,
-            s3_metadata_key=s3_metadata_key,
-            s3_imgs_key=s3_imgs_key,
-            lock_name=lock_name,
-            force_reprocess=force_reprocess,
-        )
-    except redis.exceptions.LockError:
-        duration = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=504,
-            detail=f"RES [{version.value}] | LOCK TIMEOUT | File: {filename} | Duration: {duration:.0f} ms",
-        )
-    except Exception as e:
-        duration = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=502,
-            detail=f"RES [{version.value}] | UPSTREAM FAIL | File: {filename} | Duration: {duration:.0f} ms | Error: {str(e)}",
-        )
-
     duration = (time.perf_counter() - start_time) * 1000
-    logger.info(f"RES [{version.value}] | Total: {duration:.0f} ms | File: {filename}")
+    logger.info(f"RESP [{version.value}] | Total: {duration:.0f} ms | File: {filename}")
 
     return ResponseDocument(
         page_content=processed_document.page_content,
@@ -193,56 +114,23 @@ async def process_document_download(
     file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
     force_reprocess: bool = Query(False),
 ) -> Response:
-    start_time = time.perf_counter()
-
-    file_hash = compute_hash(file_content)
-    filename = headers_data.filename
-
-    logger.info(
-        f"REQ [{version.value}] | DOWNLOAD | File: {filename} | Hash: {file_hash} | ClientKey: {api_key[:4]}***"
+    """Convert a document to Markdown and return a tar.zst archive (content.md, images and metadata)."""
+    (
+        processed_document,
+        from_cache,
+        filename,
+        _,
+        s3_imgs_key,
+        start_time,
+    ) = await resolve_request(
+        headers_data,
+        version,
+        background_tasks,
+        api_key,
+        file_content,
+        force_reprocess,
+        route="DOWNLOAD",
     )
-
-    _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
-    lock_name = get_lock_name(file_hash, version)
-
-    if s3_is_active():
-        background_tasks.add_task(
-            background_update_s3,
-            file_hash,
-            version,
-            filename,
-            file_content,
-            headers_data.content_type,
-        )
-
-    try:
-        processed_document, from_cache = await _resolve_document(
-            version=version,
-            file_hash=file_hash,
-            filename=filename,
-            file_content=file_content,
-            upstream_headers={
-                "Content-Type": headers_data.content_type,
-                "X-Filename": headers_data.x_filename,
-            },
-            s3_content_key=s3_content_key,
-            s3_metadata_key=s3_metadata_key,
-            s3_imgs_key=s3_imgs_key,
-            lock_name=lock_name,
-            force_reprocess=force_reprocess,
-        )
-    except redis.exceptions.LockError:
-        duration = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=504,
-            detail=f"RES [{version.value}] | LOCK TIMEOUT | DOWNLOAD | File: {filename} | Duration: {duration:.0f} ms",
-        )
-    except Exception as e:
-        duration = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=502,
-            detail=f"RES [{version.value}] | UPSTREAM FAIL | DOWNLOAD | File: {filename} | Duration: {duration:.0f} ms | Error: {str(e)}",
-        )
 
     # Gather images: from S3 on cache hit, from ProcessedDocument on fresh upstream call
     images_error: str | None = None
@@ -251,16 +139,17 @@ async def process_document_download(
             images_bytes: dict[str, bytes] = await s3_get_imgs(s3_imgs_key)
         except Exception as e:
             logger.warning(
-                f"RES [{version.value}] | DOWNLOAD | S3 image retrieval failed: {e}"
+                f"CACHE [{version.value}] | DOWNLOAD | S3 image retrieval failed | File: {filename} | Error: {e}"
             )
             images_bytes = {}
             images_error = f"Image retrieval from S3 failed: {e}"
     else:
-        images_bytes = {
-            name: pil_to_bytes(img) for name, img in processed_document.images.items()
-        }
+        images_bytes = await asyncio.to_thread(
+            batch_pil_to_bytes, processed_document.images
+        )
 
-    archive = build_tar_zst(
+    archive = await asyncio.to_thread(
+        build_tar_zst,
         processed_document.page_content,
         images_bytes,
         processed_document.metadata,
@@ -269,7 +158,7 @@ async def process_document_download(
 
     duration = (time.perf_counter() - start_time) * 1000
     logger.info(
-        f"RES [{version.value}] | DOWNLOAD | Total: {duration:.0f} ms | File: {filename}"
+        f"RESP [{version.value}] | DOWNLOAD | Total: {duration:.0f} ms | File: {filename}"
     )
 
     return Response(
@@ -277,6 +166,11 @@ async def process_document_download(
         media_type="application/zstd",
         headers={"Content-Disposition": f'attachment; filename="{filename}.tar.zst"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Health endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/health", tags=["Health"])
@@ -295,49 +189,19 @@ async def health_dependencies():
     - 503: Redis unreachable (app non-functional)
     """
     # --- Redis ---
-    try:
-        ping = redis_manager.client.ping()
-        assert isinstance(ping, Awaitable), (
-            "redis.asyncio.Redis.ping() did not return an awaitable"
-        )
-        if not await ping:
-            raise RuntimeError("Redis ping did not return PONG")
-        redis_status = ServiceHealth(status="ok")
-    except Exception as e:
-        redis_status = ServiceHealth(status="unhealthy", message=str(e))
+    redis_status_str, redis_msg = await check_redis_health()
+    redis_status = ServiceHealth(status=redis_status_str, message=redis_msg)
 
     # --- S3 ---
     s3_status_str, s3_msg = await check_s3_health()
     s3_status = ServiceHealth(status=s3_status_str, message=s3_msg)
 
-    # --- Backends: deduplicate by base URL, then map result back per version ---
-    base_url_to_versions: dict[str, list[str]] = {}
-    for ver, cfg in VERSION_CONFIGS.items():
-        parsed = urlparse(cfg.upstream_url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
-        base_url_to_versions.setdefault(base, []).append(ver.value)
-
-    base_url_results: dict[str, ServiceHealth] = {}
-    async with httpx.AsyncClient(timeout=3.0) as client:
-        for base_url in base_url_to_versions:
-            try:
-                resp = await client.get(f"{base_url}/health")
-                if resp.is_success:
-                    base_url_results[base_url] = ServiceHealth(status="ok")
-                else:
-                    base_url_results[base_url] = ServiceHealth(
-                        status="degraded", message=f"HTTP {resp.status_code}"
-                    )
-            except Exception as e:
-                base_url_results[base_url] = ServiceHealth(
-                    status="unhealthy", message=str(e)
-                )
-
-    backends: dict[str, ServiceHealth] = {}
-    for ver, cfg in VERSION_CONFIGS.items():
-        parsed = urlparse(cfg.upstream_url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
-        backends[ver.value] = base_url_results[base]
+    # --- Backends ---
+    backends_raw = await check_backends_health()
+    backends = {
+        ver: ServiceHealth(status=status, message=msg)
+        for ver, (status, msg) in backends_raw.items()
+    }
 
     result = DependenciesHealth(redis=redis_status, s3=s3_status, backends=backends)
 
@@ -348,8 +212,14 @@ async def health_dependencies():
     return result
 
 
+# ---------------------------------------------------------------------------
+# Static / misc
+# ---------------------------------------------------------------------------
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
+    """Serve the favicon."""
     return FileResponse(STATICS_DIR / "favicon.ico", media_type="image/x-icon")
 
 

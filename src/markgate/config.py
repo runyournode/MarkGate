@@ -3,7 +3,7 @@ from enum import Enum
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# used to call marker processing backends (not oin prod yet)
+# Used to call marker processing backends (not in prod yet)
 image_description_prompt = """You are a document analysis expert who specializes in creating text descriptions for images.
 You will receive an image of a picture or figure.  Your job will be to create a short description of the image.
 **Instructions:**
@@ -16,9 +16,7 @@ In this figure, a bar chart titled "Fruit Preference Survey" is showing the numb
 
 
 class Settings(BaseSettings):
-    """
-    GLOBAL CONFIG FOR THE GATEAWAY
-    """
+    """Application settings loaded from environment variables and .env files."""
 
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[str] = None
@@ -37,15 +35,19 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_SOCKET_TIMEOUT: float = 5.0  # shouldn't be edited
 
-    # Timeout des traitement
-    REDIS_LOCK_TIMEOUT: int = 9999999
-    REDIS_BLOCKING_TIMEOUT: int = 9999999
-    UPSTREAM_TIMEOUT: float = 9999999
+    # Processing timeouts
+    REDIS_LOCK_TIMEOUT: int = (
+        300  # Initial lock TTL (seconds). Automatically extended during upstream calls.
+    )
+    REDIS_BLOCKING_TIMEOUT: int = 9999999  # If the same task is already in process, how much are we waiting on the new request before returning an error
+    UPSTREAM_TIMEOUT: float = 9999999  # how much should we wait for the backend processor (should be ~= REDIS_BLOCKING_TIMEOUT)
 
     FAILED_REQUESTS_S3_PREFIX: str = "failed_requests"
-    FAILED_REQUESTS_LOCAL_DIR: str | None = '/tmp/markgate_failed'  # local fallback when S3 is unavailable
+    FAILED_REQUESTS_LOCAL_DIR: str | None = (
+        "/tmp/markgate_failed"  # local fallback when S3 is unavailable
+    )
 
-    S3_CACHE_ENABLED: bool = False  # set to False to disable S3 cache entirely
+    S3_CACHE_ENABLED: bool = False  # set False to disable S3 cache entirely
 
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
     # Keys that clients (e.g. Open WebUI) must provide to use this gateway
@@ -92,8 +94,6 @@ class Settings(BaseSettings):
     UPSTREAM_V4_VLLM_URL: str = "http://vllm_dumu_url:999"
     UPSTREAM_V4_VLLM_API_KEY: str = "toto"  # Key for the LLM service used by V4
 
-    # todo: a tester que les var env (e.g. export ou celles passées par docker compose)
-    #  prennent le dessus sur celles definies dans ce .py ou dans le .env)
     model_config = SettingsConfigDict(
         env_file=(".env", ".env_secret"),
         env_file_encoding="utf-8",
@@ -114,16 +114,16 @@ class ProcessingConfig(BaseModel):
 
 # Supported versions
 class Version(str, Enum):
-    """
-    Nomenclature des versions : v_X_Y_Z
-    X : Moteur principal du backend de Layout + OCR (ex: paddle, marker, docling, ...)
-    Y : Changement Radical du backend (ex: VLM utilisé en plus pour la description d'image)
-    Z : Incréments éventuels (correction bug majeur, ...)
+    """Version naming convention: v_X_Y_Z
 
-    Pour le dev utiliser V
+    X: Main backend engine for Layout + OCR (e.g. paddle, marker, docling, ...)
+    Y: Major backend change (e.g. VLM added for image description)
+    Z: Minor increments (major bug fix, ...)
+
+    Use v_1_dev for development.
     """
 
-    # Padlle
+    # Foil Serve
     v_1_0_0 = "v1.0.0"
     v_1_1_0 = "v1.1.0"  # + ministral-3-3b
     v_1_2_0 = "v1.2.0"  # + ministral-3-14b
@@ -153,59 +153,55 @@ class Version(str, Enum):
 settings = Settings()
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
     Version.v_1_0_0: ProcessingConfig(
-        description="foil-serve (sans image description)",
+        description="foil-serve (no image description)",
         upstream_url=settings.UPSTREAM_V100_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V100,
         query_params={},
         custom_headers={
-            "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
         },
     ),
     Version.v_1_1_0: ProcessingConfig(
-        description="foil-serve avec description image par ministral-3-3b",
+        description="foil-serve with image description by ministral-3-3b",
         upstream_url=settings.UPSTREAM_V110_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V110,
         query_params={
             "image_description_model_name": "ministral-3-3b",
         },
         custom_headers={
-            "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
         },
     ),
     Version.v_1_2_0: ProcessingConfig(
-        description="foil-serve avec description image par ministral-3-14b",
+        description="foil-serve with image description by ministral-3-14b",
         upstream_url=settings.UPSTREAM_V120_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V120,
         query_params={
             "image_description_model_name": "ministral-3-14b",
         },
         custom_headers={
-            "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V120_API_KEY}",
         },
     ),
     Version.v_1_3_0: ProcessingConfig(
-        description="foil-serve avec description image par GLM-4.6V-Flash",
+        description="foil-serve with image description by GLM-4.6V-Flash",
         upstream_url=settings.UPSTREAM_V130_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V130,
         query_params={
             "image_description_model_name": "GLM-4.6V-Flash",
         },
         custom_headers={
-            "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V130_API_KEY}",
         },
     ),
+
     # ALL VERSION BELOW ARE SUBJECT TO CHANGE - NOT FOR PRODUCTION USE
     Version.v_1_dev: ProcessingConfig(
-        description="foil-serve (pour le dev)",
+        description="foil-serve (development)",
         upstream_url="http://localhost:8081/v1/process",
         authorized_api_key="changeme",
         query_params={"image_description_model_name": "dev_vlm"},
         custom_headers={
-            "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
         },
     ),
@@ -251,7 +247,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             # "ocr_engine": "easyocr",
             "ocr_engine": "tesseract",
             "table_mode": "accurate",
-            "abort_on_error": True,  # effet ?
+            "abort_on_error": True,  # effect?
             "do_formula_enrichment": True,
             "do_picture_description": True,
             "picture_description_area_threshold": 0.01,
