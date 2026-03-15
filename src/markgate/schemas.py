@@ -156,5 +156,16 @@ class FailedRequestInfo(BaseModel):
     upstream_duration_ms: float
 
 
+class ServiceHealth(BaseModel):
+    status: str  # "ok" | "degraded" | "unhealthy" | "disabled" | "configured"
+    message: str | None = None
+
+
+class DependenciesHealth(BaseModel):
+    redis: ServiceHealth
+    s3: ServiceHealth
+    backends: dict[str, ServiceHealth]
+
+
 # Response of this proxy to the client
 ProxyOutput = ResponseDocument | list[ResponseDocument] | dict

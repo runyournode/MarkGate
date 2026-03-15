@@ -1,7 +1,8 @@
 import base64
+import logging
 import mimetypes
 import tarfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from typing import TYPE_CHECKING, TypeVar, Type, Any
 from io import BytesIO
 
@@ -28,6 +29,8 @@ else:
 
 from config import settings, Version, VERSION_CONFIGS
 
+logger = logging.getLogger("markgate")
+
 
 # -----------------------------------
 # S3 Connection                  -
@@ -49,6 +52,26 @@ class S3Manager:
 
 
 s3_manager = S3Manager()
+
+
+def s3_is_active() -> bool:
+    """Returns True if S3 cache is enabled and the client is initialized."""
+    return settings.S3_CACHE_ENABLED and s3_manager._client is not None
+
+
+async def check_s3_health() -> tuple[str, str | None]:
+    """Probe S3 connectivity. Returns (status, message).
+    status: 'ok' | 'degraded' | 'disabled'
+    """
+    if not settings.S3_CACHE_ENABLED:
+        return "disabled", None
+    if s3_manager._client is None:
+        return "degraded", "S3 client not initialized"
+    try:
+        await s3_manager.client.head_bucket(Bucket=settings.S3_BUCKET)
+        return "ok", None
+    except Exception as e:
+        return "degraded", str(e)
 
 
 # -----------------------------------
@@ -173,13 +196,15 @@ def build_tar_zst(
     page_content: str,
     images: dict[str, bytes],
     metadata: BaseModel | None,
+    images_error: str | None = None,
 ) -> bytes:
     """Build an in-memory tar.zst archive.
 
     Archive layout (image paths are kept as-is to match Markdown references):
         content.md
         metadata.json
-        {img_name}     # e.g. imgs/figure_1.jpg
+        {img_name}          # e.g. imgs/figure_1.jpg
+        images_error.txt    # only present when image retrieval failed
     """
 
     def _add(archive: tarfile.TarFile, name: str, data: bytes) -> None:
@@ -194,6 +219,8 @@ def build_tar_zst(
             _add(tar, "metadata.json", metadata.model_dump_json().encode("utf-8"))
         for img_name, img_bytes in images.items():
             _add(tar, img_name, img_bytes)
+        if images_error is not None:
+            _add(tar, "images_error.txt", images_error.encode("utf-8"))
     tar_buf.seek(0)
     return zstandard.ZstdCompressor().compress(tar_buf.read())
 
@@ -248,29 +275,38 @@ redis_manager = RedisManager()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
-    Start and stop S3 and Redis clients
-    :param _app:
-    :return:
+    Start and stop S3 and Redis clients.
+    S3 is only initialized when S3_CACHE_ENABLED=True.
     """
-    async with (
-        s3_manager.session.client(
-            service_name="s3",
-            endpoint_url=settings.S3_ENDPOINT,
-            aws_access_key_id=settings.S3_ACCESS_KEY,
-            aws_secret_access_key=settings.S3_SECRET_KEY,
-            region_name=settings.S3_REGION,
-        ) as s3_c,
-        Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=0,
-            decode_responses=True,  # Très pratique pour avoir des str au lieu de bytes
-            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
-        ) as redis_c,
-    ):
-        s3_manager.client = s3_c
+    async with AsyncExitStack() as stack:
+        redis_c = await stack.enter_async_context(
+            Redis(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                db=0,
+                decode_responses=True,
+                socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+            )
+        )
         redis_manager.client = redis_c
-        yield  # L'application tourne ici
+
+        if settings.S3_CACHE_ENABLED:
+            s3_c = await stack.enter_async_context(
+                s3_manager.session.client(
+                    service_name="s3",
+                    endpoint_url=settings.S3_ENDPOINT,
+                    aws_access_key_id=settings.S3_ACCESS_KEY,
+                    aws_secret_access_key=settings.S3_SECRET_KEY,
+                    region_name=settings.S3_REGION,
+                )
+            )
+            s3_manager.client = s3_c
+        else:
+            logger.info(
+                "S3 cache disabled (S3_CACHE_ENABLED=False) — all requests forwarded to upstream"
+            )
+
+        yield
 
 
 # -----------------------------------

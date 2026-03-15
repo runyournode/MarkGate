@@ -1,9 +1,12 @@
 import logging
 import time
+from collections.abc import Awaitable
 from logging.handlers import RotatingFileHandler
 from typing import Annotated
 from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 import redis
 from fastapi_offline import FastAPIOffline
 from fastapi.staticfiles import StaticFiles
@@ -19,11 +22,13 @@ from fastapi import (
     Request,
 )
 
-from config import Version, settings
+from config import Version, VERSION_CONFIGS, settings
 from schemas import (
     ExternalDocumentRequestHeaders,
     ResponseDocument,
     ProxyOutput,
+    ServiceHealth,
+    DependenciesHealth,
 )
 from services import (
     background_update_s3,
@@ -35,8 +40,11 @@ from utils import (
     lifespan,
     verify_api_key,
     s3_get_imgs,
+    s3_is_active,
+    check_s3_health,
     build_tar_zst,
     pil_to_bytes,
+    redis_manager,
 )
 
 # --- Logging Configuration ---
@@ -122,14 +130,15 @@ async def process_document(
     _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
     lock_name = get_lock_name(file_hash, version)
 
-    background_tasks.add_task(
-        background_update_s3,
-        file_hash,
-        version,
-        filename,
-        file_content,
-        headers_data.content_type,
-    )
+    if s3_is_active():
+        background_tasks.add_task(
+            background_update_s3,
+            file_hash,
+            version,
+            filename,
+            file_content,
+            headers_data.content_type,
+        )
 
     try:
         processed_document, _ = await _resolve_document(
@@ -196,14 +205,15 @@ async def process_document_download(
     _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
     lock_name = get_lock_name(file_hash, version)
 
-    background_tasks.add_task(
-        background_update_s3,
-        file_hash,
-        version,
-        filename,
-        file_content,
-        headers_data.content_type,
-    )
+    if s3_is_active():
+        background_tasks.add_task(
+            background_update_s3,
+            file_hash,
+            version,
+            filename,
+            file_content,
+            headers_data.content_type,
+        )
 
     try:
         processed_document, from_cache = await _resolve_document(
@@ -235,15 +245,26 @@ async def process_document_download(
         )
 
     # Gather images: from S3 on cache hit, from ProcessedDocument on fresh upstream call
+    images_error: str | None = None
     if from_cache:
-        images_bytes: dict[str, bytes] = await s3_get_imgs(s3_imgs_key)
+        try:
+            images_bytes: dict[str, bytes] = await s3_get_imgs(s3_imgs_key)
+        except Exception as e:
+            logger.warning(
+                f"RES [{version.value}] | DOWNLOAD | S3 image retrieval failed: {e}"
+            )
+            images_bytes = {}
+            images_error = f"Image retrieval from S3 failed: {e}"
     else:
         images_bytes = {
             name: pil_to_bytes(img) for name, img in processed_document.images.items()
         }
 
     archive = build_tar_zst(
-        processed_document.page_content, images_bytes, processed_document.metadata
+        processed_document.page_content,
+        images_bytes,
+        processed_document.metadata,
+        images_error,
     )
 
     duration = (time.perf_counter() - start_time) * 1000
@@ -256,6 +277,75 @@ async def process_document_download(
         media_type="application/zstd",
         headers={"Content-Disposition": f'attachment; filename="{filename}.tar.zst"'},
     )
+
+
+@app.get("/health", tags=["Health"])
+async def health():
+    """Application liveness: returns 200 if the app is running."""
+    return {"status": "ok"}
+
+
+@app.get("/health/dependencies", response_model=DependenciesHealth, tags=["Health"])
+async def health_dependencies():
+    """Dependency health check: Redis, S3 cache, and upstream processing backends.
+
+    HTTP status:
+    - 200: all configured dependencies healthy (or S3 disabled)
+    - 207: S3 enabled but unreachable (app still functional, cache bypassed)
+    - 503: Redis unreachable (app non-functional)
+    """
+    # --- Redis ---
+    try:
+        ping = redis_manager.client.ping()
+        assert isinstance(ping, Awaitable), (
+            "redis.asyncio.Redis.ping() did not return an awaitable"
+        )
+        if not await ping:
+            raise RuntimeError("Redis ping did not return PONG")
+        redis_status = ServiceHealth(status="ok")
+    except Exception as e:
+        redis_status = ServiceHealth(status="unhealthy", message=str(e))
+
+    # --- S3 ---
+    s3_status_str, s3_msg = await check_s3_health()
+    s3_status = ServiceHealth(status=s3_status_str, message=s3_msg)
+
+    # --- Backends: deduplicate by base URL, then map result back per version ---
+    base_url_to_versions: dict[str, list[str]] = {}
+    for ver, cfg in VERSION_CONFIGS.items():
+        parsed = urlparse(cfg.upstream_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        base_url_to_versions.setdefault(base, []).append(ver.value)
+
+    base_url_results: dict[str, ServiceHealth] = {}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for base_url in base_url_to_versions:
+            try:
+                resp = await client.get(f"{base_url}/health")
+                if resp.is_success:
+                    base_url_results[base_url] = ServiceHealth(status="ok")
+                else:
+                    base_url_results[base_url] = ServiceHealth(
+                        status="degraded", message=f"HTTP {resp.status_code}"
+                    )
+            except Exception as e:
+                base_url_results[base_url] = ServiceHealth(
+                    status="unhealthy", message=str(e)
+                )
+
+    backends: dict[str, ServiceHealth] = {}
+    for ver, cfg in VERSION_CONFIGS.items():
+        parsed = urlparse(cfg.upstream_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        backends[ver.value] = base_url_results[base]
+
+    result = DependenciesHealth(redis=redis_status, s3=s3_status, backends=backends)
+
+    if redis_status.status == "unhealthy":
+        return JSONResponse(status_code=503, content=result.model_dump())
+    if s3_status.status == "degraded":
+        return JSONResponse(status_code=207, content=result.model_dump())
+    return result
 
 
 @app.get("/favicon.ico", include_in_schema=False)

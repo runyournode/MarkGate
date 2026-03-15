@@ -20,6 +20,7 @@ from schemas import (
 )
 from utils import (
     s3_manager,
+    s3_is_active,
     s3_put_content,
     s3_get_content,
     s3_put_imgs,
@@ -60,6 +61,8 @@ async def background_update_s3(
      - Depending on the hashfile
      - Depending on the hashfile + version
     """
+    if not settings.S3_CACHE_ENABLED:
+        return
     ext: str = get_extension(filename) or ".bin"
     source_key: str = f"documents/{file_hash}/source{ext}"
     alias_key: str = f"documents/{file_hash}/_aliases.json"
@@ -173,7 +176,9 @@ async def save_failed_request(
     error_message: str,
     upstream_duration_ms: float,
 ) -> None:
-    """Fire-and-forget: save failed request artifacts to S3 for debugging."""
+    """Fire-and-forget: save failed request artifacts for debugging.
+    Tries S3 first (if enabled), then falls back to FAILED_REQUESTS_LOCAL_DIR.
+    """
     now = datetime.now(tz=UTC)
     prefix = f"{settings.FAILED_REQUESTS_S3_PREFIX}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
     ext = get_extension(filename) or ".bin"
@@ -185,20 +190,41 @@ async def save_failed_request(
         error_message=error_message,
         upstream_duration_ms=upstream_duration_ms,
     )
-    try:
-        await s3_manager.client.put_object(
-            Bucket=settings.S3_BUCKET,
-            Key=f"{prefix}/source{ext}",
-            Body=file_content,
-            ContentType="application/octet-stream",
-        )
-        await s3_put_pydantic(f"{prefix}/error.json", info)
-        logger.info(
-            f"FAIL [{version.value}] | Saved failed request to S3 | Hash: {file_hash}"
-        )
-    except Exception as e:
-        logger.error(
-            f"FAIL [{version.value}] | Could not save failed request to S3 | Error: {e}"
+
+    if s3_is_active():
+        try:
+            await s3_manager.client.put_object(
+                Bucket=settings.S3_BUCKET,
+                Key=f"{prefix}/source{ext}",
+                Body=file_content,
+                ContentType="application/octet-stream",
+            )
+            await s3_put_pydantic(f"{prefix}/error.json", info)
+            logger.info(
+                f"FAIL [{version.value}] | Saved failed request to S3 | Hash: {file_hash}"
+            )
+            return
+        except Exception as e:
+            logger.warning(
+                f"FAIL [{version.value}] | Could not save failed request to S3, trying local fallback | Error: {e}"
+            )
+
+    if settings.FAILED_REQUESTS_LOCAL_DIR:
+        try:
+            local_dir = FilePath(settings.FAILED_REQUESTS_LOCAL_DIR) / prefix
+            local_dir.mkdir(parents=True, exist_ok=True)
+            (local_dir / f"source{ext}").write_bytes(file_content)
+            (local_dir / "error.json").write_text(info.model_dump_json())
+            logger.info(
+                f"FAIL [{version.value}] | Saved failed request locally | Path: {local_dir} | Hash: {file_hash}"
+            )
+        except Exception as e:
+            logger.error(
+                f"FAIL [{version.value}] | Could not save failed request locally | Error: {e}"
+            )
+    else:
+        logger.warning(
+            f"FAIL [{version.value}] | Failed request not archived: S3 unavailable and FAILED_REQUESTS_LOCAL_DIR not set | Hash: {file_hash}"
         )
 
 
@@ -225,23 +251,39 @@ async def _resolve_document(
         timeout=settings.REDIS_LOCK_TIMEOUT,
         blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
     ):
-        if not force_reprocess and await s3_key_exists(s3_content_key):
-            s3_start = time.perf_counter()
-            page_content = await s3_get_content(s3_content_key)
-            metadata = (
-                await s3_get_pydantic(s3_metadata_key, Metadata)
-                if await s3_key_exists(s3_metadata_key)
-                else None
-            )
-            s3_duration = (time.perf_counter() - s3_start) * 1000
-            logger.info(
-                f"RES [{version.value}] | CACHE HIT | S3 Read: {s3_duration:.0f} ms | File: {filename}"
-            )
-            return ProcessedDocument(
-                page_content=page_content, metadata=metadata, images={}
-            ), True
+        s3_ok = s3_is_active()
 
-        log_prefix = "FORCED REPROCESS" if force_reprocess else "CACHE MISS"
+        if s3_ok and not force_reprocess:
+            try:
+                if await s3_key_exists(s3_content_key):
+                    s3_start = time.perf_counter()
+                    page_content = await s3_get_content(s3_content_key)
+                    metadata = (
+                        await s3_get_pydantic(s3_metadata_key, Metadata)
+                        if await s3_key_exists(s3_metadata_key)
+                        else None
+                    )
+                    s3_duration = (time.perf_counter() - s3_start) * 1000
+                    logger.info(
+                        f"RES [{version.value}] | CACHE HIT | S3 Read: {s3_duration:.0f} ms | File: {filename}"
+                    )
+                    return ProcessedDocument(
+                        page_content=page_content, metadata=metadata, images={}
+                    ), True
+            except Exception as e:
+                logger.warning(
+                    f"RES [{version.value}] | S3 read failed, bypassing cache: {e} | File: {filename}"
+                )
+                s3_ok = False
+
+        if force_reprocess:
+            log_prefix = "FORCED REPROCESS"
+        elif not settings.S3_CACHE_ENABLED:
+            log_prefix = "CACHE DISABLED"
+        elif not s3_ok:
+            log_prefix = "CACHE NOT REACHEABLE"
+        else:
+            log_prefix = "CACHE MISS"
         logger.info(
             f"PRC [{version.value}] | {log_prefix} | PROCESSING UPSTREAM | File: {filename}"
         )
@@ -269,9 +311,17 @@ async def _resolve_document(
             raise
 
         upstream_duration = (time.perf_counter() - upstream_start) * 1000
-        await update_s3_processed(
-            processed_document, s3_content_key, s3_metadata_key, s3_imgs_key
-        )
+
+        if s3_ok:
+            try:
+                await update_s3_processed(
+                    processed_document, s3_content_key, s3_metadata_key, s3_imgs_key
+                )
+            except Exception as e:
+                logger.warning(
+                    f"RES [{version.value}] | S3 write failed, result not cached: {e} | File: {filename}"
+                )
+
         logger.info(
             f"RES [{version.value}] | UPSTREAM OK | Upstream: {upstream_duration:.0f} ms | File: {filename}"
         )

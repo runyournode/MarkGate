@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     UPSTREAM_TIMEOUT: float = 9999999
 
     FAILED_REQUESTS_S3_PREFIX: str = "failed_requests"
+    FAILED_REQUESTS_LOCAL_DIR: str | None = '/tmp/markgate_failed'  # local fallback when S3 is unavailable
+
+    S3_CACHE_ENABLED: bool = False  # set to False to disable S3 cache entirely
 
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
     # Keys that clients (e.g. Open WebUI) must provide to use this gateway
