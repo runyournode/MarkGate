@@ -4,7 +4,14 @@ from datetime import datetime
 from urllib.parse import unquote
 from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict, RootModel, field_validator, field_serializer
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    RootModel,
+    field_validator,
+    field_serializer,
+)
 from PIL import Image
 
 
@@ -18,7 +25,7 @@ class ExternalDocumentRequestHeaders(BaseModel):
         description="File MIME type (ex: application/pdf) or application/octet-stream",
         examples=["application/octet-stream", "application/pdf"],
     )
-    x_filename: str =  Field(
+    x_filename: str = Field(
         alias="X-Filename",
         description="Original file name, **URL-encoded (quoted)** (ex: mon%20document.pdf)",
         examples=["mon%20document.pdf", "%C3%A9tude%202024.pdf"],
@@ -76,8 +83,10 @@ class ResponseDocument(BaseModel):
     Response from this proxy/gateway
     Images are not sent back (yet)
     """
+
     page_content: str
     metadata: Metadata | None = None
+
 
 class ProcessedDocument(ResponseDocument):
     """
@@ -86,6 +95,7 @@ class ProcessedDocument(ResponseDocument):
     This is an intermediairia/internal format and not sent to the client
     :warning: As we are storing PIL images, it is not serializable !
     """
+
     page_content: str
     images: dict[str, Image.Image] = Field(default_factory=dict)
     metadata: Metadata | None = None
@@ -137,6 +147,7 @@ class ProcessedDocument(ResponseDocument):
 
 class FailedRequestInfo(BaseModel):
     """Saved to S3 under failed_requests/ when an upstream call fails."""
+
     timestamp: datetime
     version: str
     filename: str

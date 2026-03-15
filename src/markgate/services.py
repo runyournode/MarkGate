@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
@@ -10,7 +11,13 @@ from PIL import Image
 import httpx
 
 from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
-from schemas import S3Metadata, S3FileAliases, ProcessedDocument, Metadata, FailedRequestInfo
+from schemas import (
+    S3Metadata,
+    S3FileAliases,
+    ProcessedDocument,
+    Metadata,
+    FailedRequestInfo,
+)
 from utils import (
     s3_manager,
     s3_put_content,
@@ -143,7 +150,7 @@ async def update_s3_processed(
     processed_document: ProcessedDocument,
     s3_content_key: str,
     s3_metadata_key: str,
-    s3_imgs_key: str
+    s3_imgs_key: str,
 ):
     """
     Upload the processed document: md extraction, metadata (from backend processor) and optionnaly images
@@ -186,9 +193,13 @@ async def save_failed_request(
             ContentType="application/octet-stream",
         )
         await s3_put_pydantic(f"{prefix}/error.json", info)
-        logger.info(f"FAIL [{version.value}] | Saved failed request to S3 | Hash: {file_hash}")
+        logger.info(
+            f"FAIL [{version.value}] | Saved failed request to S3 | Hash: {file_hash}"
+        )
     except Exception as e:
-        logger.error(f"FAIL [{version.value}] | Could not save failed request to S3 | Error: {e}")
+        logger.error(
+            f"FAIL [{version.value}] | Could not save failed request to S3 | Error: {e}"
+        )
 
 
 async def _resolve_document(
@@ -226,10 +237,14 @@ async def _resolve_document(
             logger.info(
                 f"RES [{version.value}] | CACHE HIT | S3 Read: {s3_duration:.0f} ms | File: {filename}"
             )
-            return ProcessedDocument(page_content=page_content, metadata=metadata, images={}), True
+            return ProcessedDocument(
+                page_content=page_content, metadata=metadata, images={}
+            ), True
 
         log_prefix = "FORCED REPROCESS" if force_reprocess else "CACHE MISS"
-        logger.info(f"PRC [{version.value}] | {log_prefix} | PROCESSING UPSTREAM | File: {filename}")
+        logger.info(
+            f"PRC [{version.value}] | {log_prefix} | PROCESSING UPSTREAM | File: {filename}"
+        )
 
         upstream_start = time.perf_counter()
         try:
@@ -241,18 +256,22 @@ async def _resolve_document(
             )
         except Exception as e:
             upstream_duration_ms = (time.perf_counter() - upstream_start) * 1000
-            asyncio.create_task(save_failed_request(
-                file_content=file_content,
-                filename=filename,
-                file_hash=file_hash,
-                version=version,
-                error_message=str(e),
-                upstream_duration_ms=upstream_duration_ms,
-            ))
+            asyncio.create_task(
+                save_failed_request(
+                    file_content=file_content,
+                    filename=filename,
+                    file_hash=file_hash,
+                    version=version,
+                    error_message=str(e),
+                    upstream_duration_ms=upstream_duration_ms,
+                )
+            )
             raise
 
         upstream_duration = (time.perf_counter() - upstream_start) * 1000
-        await update_s3_processed(processed_document, s3_content_key, s3_metadata_key, s3_imgs_key)
+        await update_s3_processed(
+            processed_document, s3_content_key, s3_metadata_key, s3_imgs_key
+        )
         logger.info(
             f"RES [{version.value}] | UPSTREAM OK | Upstream: {upstream_duration:.0f} ms | File: {filename}"
         )
@@ -263,7 +282,7 @@ async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
     async with httpx.AsyncClient(timeout=settings.UPSTREAM_TIMEOUT) as async_client:
-    # with httpx.Client(timeout=300.0) as client:
+        # with httpx.Client(timeout=300.0) as client:
         # Get the config
         config: ProcessingConfig = VERSION_CONFIGS[version]
 
@@ -271,13 +290,13 @@ async def call_upstream_backend(
         # if config.custom_headers:  # api key(s) for the backend
         #     headers.update(config.custom_headers)
         match version:
-            case ( # routage vers foil-serve
+            case (  # routage vers foil-serve
                 Version.v_1_0_0 | Version.v_1_1_0 | Version.v_1_2_0
             ):
                 resp = await async_client.post(
                     url=config.upstream_url,
                     content=file_content,
-                    params=config.query_params, # {} pour v1
+                    params=config.query_params,  # {} pour v1
                     headers=config.custom_headers,
                 )
                 resp.raise_for_status()
@@ -286,7 +305,9 @@ async def call_upstream_backend(
                 # Get md and dict of images (b64) from response
                 page_content = data.get("page_content", "")
                 if not page_content:
-                    raise ValueError(f"Upstream returned empty page_content. Full response: {data}")
+                    raise ValueError(
+                        f"Upstream returned empty page_content. Full response: {data}"
+                    )
 
                 imgs: dict[str, str] = data.get("images", {})
 
@@ -294,7 +315,9 @@ async def call_upstream_backend(
                 meta = data.get("metadata", {})
 
                 # Convert to pil
-                imgs: dict[str, Image.Image] = {name: base64_to_pil(img) for name, img in imgs.items()}
+                imgs: dict[str, Image.Image] = {
+                    name: base64_to_pil(img) for name, img in imgs.items()
+                }
 
                 return ProcessedDocument(
                     page_content=page_content,
@@ -302,14 +325,12 @@ async def call_upstream_backend(
                     metadata=Metadata(meta),
                 )
 
-
             case Version.v_4_0_0:  # routage vers docling
                 # files = {"files": (filename, file_content, headers["Content-Type"])}
 
                 content_type = headers["Content-Type"]
-                if content_type == 'application/octet-stream':
+                if content_type == "application/octet-stream":
                     content_type = get_mime_type(file_content)
-
 
                 files = {"files": (filename, file_content, content_type)}
 
@@ -338,10 +359,14 @@ async def call_upstream_backend(
                 # }
                 # resp = await async_client.post(url, files=files, data=parameters, headers=config.custom_headers)
 
+                form_data = {
+                    k: json.dumps(v) if isinstance(v, dict) else v
+                    for k, v in config.query_params.items()
+                }
                 resp = await async_client.post(
                     url=config.upstream_url,
                     files=files,
-                    data=config.query_params,
+                    data=form_data,
                     headers=config.custom_headers,
                 )
                 resp.raise_for_status()
@@ -353,11 +378,13 @@ async def call_upstream_backend(
                 return ProcessedDocument(
                     page_content=page_content,
                     metadata=Metadata(
-                        status=data.get("status"),
-                        processing_time=data.get("processing_time"),
-                        errors=data.get("errors"),
+                        {
+                            "status": data.get("status"),
+                            "processing_time": data.get("processing_time"),
+                            "errors": data.get("errors"),
+                        }
                     ),
-                    images={}
+                    images={},
                 )
 
             case _:

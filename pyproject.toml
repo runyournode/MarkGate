@@ -22,12 +22,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "mypy>=1.8.0",
-    "ruff==0.14.10",
-    "ty==0.0.7",
-    "types-redis>=4.6.0",
+    "ruff==0.15.6",
+    "ty==0.0.23",
     "types-aiobotocore[s3]>=3.0.0",
 ]
+
+[tool.ty.environment]
+extra-paths = ["src/markgate"]
 
 [build-system]
 requires = ["hatchling"]
@@ -36,7 +37,3 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/markgate"]
 
-[tool.mypy]
-strict = true
-disallow_untyped_defs = true
-warn_return_any = true

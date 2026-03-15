@@ -103,12 +103,12 @@ def _build_s3_keys(file_hash: str, version: Version) -> tuple[str, str, str, str
     response_model=ProxyOutput,
 )
 async def process_document(
-        headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
-        version: Version,
-        background_tasks: BackgroundTasks,
-        api_key: Annotated[str, Depends(verify_api_key)],
-        file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
-        force_reprocess: bool = Query(False),
+    headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
+    version: Version,
+    background_tasks: BackgroundTasks,
+    api_key: Annotated[str, Depends(verify_api_key)],
+    file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
+    force_reprocess: bool = Query(False),
 ) -> ProxyOutput | dict:
     start_time = time.perf_counter()
 
@@ -123,7 +123,12 @@ async def process_document(
     lock_name = get_lock_name(file_hash, version)
 
     background_tasks.add_task(
-        background_update_s3, file_hash, version, filename, file_content, headers_data.content_type
+        background_update_s3,
+        file_hash,
+        version,
+        filename,
+        file_content,
+        headers_data.content_type,
     )
 
     try:
@@ -167,15 +172,17 @@ async def process_document(
 @app.put(
     "/md/{version}/process/download",
     response_class=Response,
-    responses={200: {"content": {"application/zstd": {}}, "description": "tar.zst archive"}},
+    responses={
+        200: {"content": {"application/zstd": {}}, "description": "tar.zst archive"}
+    },
 )
 async def process_document_download(
-        headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
-        version: Version,
-        background_tasks: BackgroundTasks,
-        api_key: Annotated[str, Depends(verify_api_key)],
-        file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
-        force_reprocess: bool = Query(False),
+    headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
+    version: Version,
+    background_tasks: BackgroundTasks,
+    api_key: Annotated[str, Depends(verify_api_key)],
+    file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
+    force_reprocess: bool = Query(False),
 ) -> Response:
     start_time = time.perf_counter()
 
@@ -190,7 +197,12 @@ async def process_document_download(
     lock_name = get_lock_name(file_hash, version)
 
     background_tasks.add_task(
-        background_update_s3, file_hash, version, filename, file_content, headers_data.content_type
+        background_update_s3,
+        file_hash,
+        version,
+        filename,
+        file_content,
+        headers_data.content_type,
     )
 
     try:
@@ -227,14 +239,17 @@ async def process_document_download(
         images_bytes: dict[str, bytes] = await s3_get_imgs(s3_imgs_key)
     else:
         images_bytes = {
-            name: pil_to_bytes(img)
-            for name, img in processed_document.images.items()
+            name: pil_to_bytes(img) for name, img in processed_document.images.items()
         }
 
-    archive = build_tar_zst(processed_document.page_content, images_bytes, processed_document.metadata)
+    archive = build_tar_zst(
+        processed_document.page_content, images_bytes, processed_document.metadata
+    )
 
     duration = (time.perf_counter() - start_time) * 1000
-    logger.info(f"RES [{version.value}] | DOWNLOAD | Total: {duration:.0f} ms | File: {filename}")
+    logger.info(
+        f"RES [{version.value}] | DOWNLOAD | Total: {duration:.0f} ms | File: {filename}"
+    )
 
     return Response(
         content=archive,
@@ -250,4 +265,5 @@ async def favicon():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8080)

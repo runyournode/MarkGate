@@ -111,7 +111,9 @@ def _pil_format_to_mime(format_: str) -> str:
     """
     if mime := _PIL_FORMAT_TO_MIME.get(format_):
         return mime
-    if (ext := _PIL_FORMAT_TO_EXT.get(format_)) and (mime := mimetypes.types_map.get(ext.lower())):
+    if (ext := _PIL_FORMAT_TO_EXT.get(format_)) and (
+        mime := mimetypes.types_map.get(ext.lower())
+    ):
         return mime
     return "application/octet-stream"
 
@@ -133,13 +135,16 @@ def pil_to_bytes(img: Image.Image) -> bytes:
 async def s3_put_imgs(root_img_key: str, images: dict[str, Image.Image]):
     """Envoie les images dans le S3 en préservant le format original du backend processor."""
     for name, image in images.items():
-        format_ = image.format or "JPEG"  # shared source of truth for both Body and ContentType
+        format_ = (
+            image.format or "JPEG"
+        )  # shared source of truth for both Body and ContentType
         await s3_manager.client.put_object(
             Bucket=settings.S3_BUCKET,
             Key=f"{root_img_key}/{name}",
             Body=pil_to_bytes(image),
             ContentType=_pil_format_to_mime(format_),
         )
+
 
 async def s3_get_imgs(root_img_key: str) -> dict[str, bytes]:
     """Retrieve all images stored under root_img_key prefix.
@@ -148,13 +153,17 @@ async def s3_get_imgs(root_img_key: str) -> dict[str, bytes]:
     """
     prefix = f"{root_img_key}/"
     result: dict[str, bytes] = {}
-    response = await s3_manager.client.list_objects_v2(Bucket=settings.S3_BUCKET, Prefix=prefix)
+    response = await s3_manager.client.list_objects_v2(
+        Bucket=settings.S3_BUCKET, Prefix=prefix
+    )
     for obj in response.get("Contents", []):
         key: str = obj["Key"]
-        relative_path = key[len(prefix):]
+        relative_path = key[len(prefix) :]
         if not relative_path:
             continue
-        img_response = await s3_manager.client.get_object(Bucket=settings.S3_BUCKET, Key=key)
+        img_response = await s3_manager.client.get_object(
+            Bucket=settings.S3_BUCKET, Key=key
+        )
         async with img_response["Body"] as stream:
             result[relative_path] = await stream.read()
     return result
@@ -172,6 +181,7 @@ def build_tar_zst(
         metadata.json
         {img_name}     # e.g. imgs/figure_1.jpg
     """
+
     def _add(archive: tarfile.TarFile, name: str, data: bytes) -> None:
         info = tarfile.TarInfo(name=name)
         info.size = len(data)
@@ -188,8 +198,8 @@ def build_tar_zst(
     return zstandard.ZstdCompressor().compress(tar_buf.read())
 
 
-
 T = TypeVar("T", bound=BaseModel)
+
 
 async def s3_get_pydantic(key: str, base_model: Type[T]) -> T:
     """Récupère un objet S3 et le transforme directement en modèle Pydantic."""
@@ -207,8 +217,6 @@ async def s3_put_pydantic(key: str, model_item: BaseModel):
         Body=model_item.model_dump_json(),
         ContentType="application/json",
     )
-
-
 
 
 # -----------------------------------
@@ -265,7 +273,6 @@ async def lifespan(_app: FastAPI):
         yield  # L'application tourne ici
 
 
-
 # -----------------------------------
 # Incoming API key verification     -
 # -----------------------------------
@@ -294,6 +301,7 @@ async def verify_api_key(
 # -----------------------------------
 # Lifespan management               -
 # -----------------------------------
+
 
 def get_mime_type(content: bytes) -> str:
     # Initialise magic pour retourner le type MIME

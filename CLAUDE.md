@@ -19,7 +19,7 @@ uv venv && uv sync   # Install all dependencies including dev
 ```bash
 uv run ruff check src/          # Lint
 uv run ruff format src/         # Format
-uv run mypy src/                # Type check (strict mode)
+uv run ty check src/            # Type check
 ```
 
 ### Running Locally

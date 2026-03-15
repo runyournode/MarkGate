@@ -1,8 +1,7 @@
-from typing import Optional, List
+from typing import Any, Optional
 from enum import Enum
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import json
 
 # used to call marker processing backends (not oin prod yet)
 image_description_prompt = """You are a document analysis expert who specializes in creating text descriptions for images.
@@ -28,13 +27,15 @@ class Settings(BaseSettings):
 
     S3_ENDPOINT: str = "http://localhost:3900"
     S3_ACCESS_KEY: str = "GK4bfd698ae1e5d64fb82cda99"
-    S3_SECRET_KEY: str = "9da62e93199a79737603cbc46b05fd03412e582386f0cb19795aec7386c32f9e"
+    S3_SECRET_KEY: str = (
+        "9da62e93199a79737603cbc46b05fd03412e582386f0cb19795aec7386c32f9e"
+    )
     S3_BUCKET: str = "markgate-cache"
     S3_REGION: str = "garage"
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
-    REDIS_SOCKET_TIMEOUT: float = 5.0 # shouldn't be edited
+    REDIS_SOCKET_TIMEOUT: float = 5.0  # shouldn't be edited
 
     # Timeout des traitement
     REDIS_LOCK_TIMEOUT: int = 9999999
@@ -54,7 +55,6 @@ class Settings(BaseSettings):
     CLIENT_API_KEY_V300: str = "changeme"
     CLIENT_API_KEY_V400: str = "changeme"
 
-
     # --- UPSTREAM CONFIGURATION (Proxy -> Backend) ---
 
     # V1: foil-serve
@@ -72,8 +72,6 @@ class Settings(BaseSettings):
     # V1: foil-serve + GLM-4.6V-Flash
     UPSTREAM_V130_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V130_API_KEY: str = "changeme"  # Key for the V1 backend
-
-
 
     # V2: Marker with qwen3-vl and image description
     UPSTREAM_V2_URL: str = "http://localhost:9001/process"
@@ -103,12 +101,11 @@ class ProcessingConfig(BaseModel):
     """
     Configuration of the processing backend
     """
+
     description: str  # not sent to backend, fyi only
     upstream_url: str  # full url/route to the backend
     authorized_api_key: str  # not sent to the backend, used to check if client is allowed to contact this proxy
-    query_params: dict[
-        str, str | int | float | bool | dict | List[str]
-    ] = {}  # processing param sent to backend
+    query_params: dict[str, Any] = {}  # processing param sent to backend
     custom_headers: dict[str, str] = {}  # secrets sent to backend
 
 
@@ -127,7 +124,7 @@ class Version(str, Enum):
     v_1_0_0 = "v1.0.0"
     v_1_1_0 = "v1.1.0"  # + ministral-3-3b
     v_1_2_0 = "v1.2.0"  # + ministral-3-14b
-    v_1_3_0 = "v1.3.0"   # + GLM-4.6V-Flash
+    v_1_3_0 = "v1.3.0"  # + GLM-4.6V-Flash
 
     # Marker
     v_2_0_0 = "v2.0.0"
@@ -147,12 +144,11 @@ class Version(str, Enum):
 
 # -------------------------------------------------
 # CONFIGURATION FOR THE PROCESSING BACKENDS       -
-# When adding new conf, use json.dumps() for      -
-# nested dict in query_params  (e.g V4)           -
+# Nested dicts in query_params are auto-serialized -
+# to JSON strings in services.py (e.g V4)         -
 # -------------------------------------------------
 settings = Settings()
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
-
     Version.v_1_0_0: ProcessingConfig(
         description="foil-serve (sans image description)",
         upstream_url=settings.UPSTREAM_V100_URL,
@@ -163,65 +159,53 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
         },
     ),
-
     Version.v_1_1_0: ProcessingConfig(
-            description="foil-serve avec description image par ministral-3-3b",
-            upstream_url=settings.UPSTREAM_V110_URL,
-            authorized_api_key=settings.CLIENT_API_KEY_V110,
-            query_params={
-                "image_description_model_name": "ministral-3-3b",
-            },
-            custom_headers={
-                "Content-Type": "application/octet-stream",
-                "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
-            },
-        ),
-
+        description="foil-serve avec description image par ministral-3-3b",
+        upstream_url=settings.UPSTREAM_V110_URL,
+        authorized_api_key=settings.CLIENT_API_KEY_V110,
+        query_params={
+            "image_description_model_name": "ministral-3-3b",
+        },
+        custom_headers={
+            "Content-Type": "application/octet-stream",
+            "Authorization": f"Bearer {settings.UPSTREAM_V110_API_KEY}",
+        },
+    ),
     Version.v_1_2_0: ProcessingConfig(
-                description="foil-serve avec description image par ministral-3-14b",
-                upstream_url=settings.UPSTREAM_V120_URL,
-                authorized_api_key=settings.CLIENT_API_KEY_V120,
-                query_params={
-                    "image_description_model_name": "ministral-3-14b",
-                },
-                custom_headers={
-                    "Content-Type": "application/octet-stream",
-                    "Authorization": f"Bearer {settings.UPSTREAM_V120_API_KEY}",
-                },
-            ),
-
+        description="foil-serve avec description image par ministral-3-14b",
+        upstream_url=settings.UPSTREAM_V120_URL,
+        authorized_api_key=settings.CLIENT_API_KEY_V120,
+        query_params={
+            "image_description_model_name": "ministral-3-14b",
+        },
+        custom_headers={
+            "Content-Type": "application/octet-stream",
+            "Authorization": f"Bearer {settings.UPSTREAM_V120_API_KEY}",
+        },
+    ),
     Version.v_1_3_0: ProcessingConfig(
-                    description="foil-serve avec description image par GLM-4.6V-Flash",
-                    upstream_url=settings.UPSTREAM_V130_URL,
-                    authorized_api_key=settings.CLIENT_API_KEY_V130,
-                    query_params={
-                        "image_description_model_name": "GLM-4.6V-Flash",
-                    },
-                    custom_headers={
-                        "Content-Type": "application/octet-stream",
-                        "Authorization": f"Bearer {settings.UPSTREAM_V130_API_KEY}",
-                    },
-                ),
-
-
-
+        description="foil-serve avec description image par GLM-4.6V-Flash",
+        upstream_url=settings.UPSTREAM_V130_URL,
+        authorized_api_key=settings.CLIENT_API_KEY_V130,
+        query_params={
+            "image_description_model_name": "GLM-4.6V-Flash",
+        },
+        custom_headers={
+            "Content-Type": "application/octet-stream",
+            "Authorization": f"Bearer {settings.UPSTREAM_V130_API_KEY}",
+        },
+    ),
     # ALL VERSION BELOW ARE SUBJECT TO CHANGE - NOT FOR PRODUCTION USE
-
-
     Version.v_1_dev: ProcessingConfig(
         description="foil-serve (pour le dev)",
         upstream_url="http://localhost:8081/v1/process",
         authorized_api_key="changeme",
-        query_params={
-            "image_description_model_name": "dev_vlm"
-        },
+        query_params={"image_description_model_name": "dev_vlm"},
         custom_headers={
             "Content-Type": "application/octet-stream",
             "Authorization": f"Bearer {settings.UPSTREAM_V100_API_KEY}",
         },
     ),
-
-
     Version.v_2_0_0: ProcessingConfig(
         description="Marker native with qwen3-vl and image description",
         upstream_url=settings.UPSTREAM_V2_URL,
@@ -247,7 +231,6 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         authorized_api_key=settings.CLIENT_API_KEY_V300,
         custom_headers={"Authorization": f"Bearer {settings.UPSTREAM_V3_API_KEY}"},
     ),
-
     Version.v_4_0_0: ProcessingConfig(
         description="Docling test",
         upstream_url=settings.UPSTREAM_V4_URL,
@@ -269,21 +252,19 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             "do_formula_enrichment": True,
             "do_picture_description": True,
             "picture_description_area_threshold": 0.01,
-            "picture_description_api": json.dumps(
-                {
-                    "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
-                    "headers": {
-                        "Authorization": f"Bearer {settings.UPSTREAM_V4_VLLM_API_KEY}",
-                    },
-                    "params": {
-                        "model": "stepfun-ai/Step3-VL-10B",
-                        "max_completion_tokens": 500,
-                    },
-                    "timeout": 60,
-                    "concurrency": 10,
-                    "prompt": image_description_prompt,
-                }
-            ),
+            "picture_description_api": {
+                "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
+                "headers": {
+                    "Authorization": f"Bearer {settings.UPSTREAM_V4_VLLM_API_KEY}",
+                },
+                "params": {
+                    "model": "stepfun-ai/Step3-VL-10B",
+                    "max_completion_tokens": 500,
+                },
+                "timeout": 60,
+                "concurrency": 10,
+                "prompt": image_description_prompt,
+            },
             # "vlm_pipeline_model_api": {
             #     "url": f"{settings.UPSTREAM_V4_VLLM_URL}",
             #     "headers": {
@@ -298,5 +279,4 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         },
         custom_headers={"X-Api-Key": settings.UPSTREAM_V4_API_KEY},
     ),
-
 }
