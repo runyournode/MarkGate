@@ -135,5 +135,15 @@ class ProcessedDocument(ResponseDocument):
         return result
 
 
+class FailedRequestInfo(BaseModel):
+    """Saved to S3 under failed_requests/ when an upstream call fails."""
+    timestamp: datetime
+    version: str
+    filename: str
+    file_hash: str
+    error_message: str
+    upstream_duration_ms: float
+
+
 # Response of this proxy to the client
 ProxyOutput = ResponseDocument | list[ResponseDocument] | dict

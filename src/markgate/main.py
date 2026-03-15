@@ -7,7 +7,7 @@ from pathlib import Path
 import redis
 from fastapi_offline import FastAPIOffline
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi import (
     FastAPI,
     BackgroundTasks,
@@ -15,31 +15,28 @@ from fastapi import (
     Depends,
     Header,
     HTTPException,
+    Query,
     Request,
 )
 
 from config import Version, settings
 from schemas import (
     ExternalDocumentRequestHeaders,
-    ProcessedDocument,
     ResponseDocument,
     ProxyOutput,
-    Metadata,
 )
 from services import (
     background_update_s3,
-    update_s3_processed,
-    call_upstream_backend,
     compute_hash,
     get_lock_name,
+    _resolve_document,
 )
 from utils import (
     lifespan,
-    redis_manager,
     verify_api_key,
-    s3_key_exists,
-    s3_get_content,
-    s3_get_pydantic,
+    s3_get_imgs,
+    build_tar_zst,
+    pil_to_bytes,
 )
 
 # --- Logging Configuration ---
@@ -84,7 +81,6 @@ app.mount("/statics", StaticFiles(directory=STATICS_DIR), name="statics")
 # --- Global Exception Handler ---
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_request: Request, exc: HTTPException):
-    # Log the exception details
     if exc.status_code >= 500:
         logger.error(f"HTTP {exc.status_code} | {exc.detail}")
     else:
@@ -94,6 +90,12 @@ async def http_exception_handler(_request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
+
+
+def _build_s3_keys(file_hash: str, version: Version) -> tuple[str, str, str, str]:
+    """Returns (s3_root_key, s3_content_key, s3_metadata_key, s3_imgs_key)."""
+    root = f"documents/{file_hash}/{version.value}"
+    return root, f"{root}/content.md", f"{root}/metadata.json", f"{root}/images"
 
 
 @app.put(
@@ -106,133 +108,139 @@ async def process_document(
         background_tasks: BackgroundTasks,
         api_key: Annotated[str, Depends(verify_api_key)],
         file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
+        force_reprocess: bool = Query(False),
 ) -> ProxyOutput | dict:
     start_time = time.perf_counter()
 
-    file_hash: str = compute_hash(file_content)
-    filename = headers_data.filename  # human readable filename, cannot be passed as header, use headers_data.x_filename
+    file_hash = compute_hash(file_content)
+    filename = headers_data.filename  # human-readable filename, cannot be passed as header, use headers_data.x_filename
 
-    # Log incoming request
     logger.info(
         f"REQ [{version.value}] | File: {filename} | Hash: {file_hash} | ClientKey: {api_key[:4]}***"
     )
 
-    s3_root_key: str = f"documents/{file_hash}/{version.value}"
-    s3_content_key: str = f"{s3_root_key}/content.md"
-    s3_metadata_key: str = f"{s3_root_key}/metadata.json"
-    s3_imgs_key: str = f"{s3_root_key}/images"
-    lock_name: str = get_lock_name(file_hash, version)
+    _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
+    lock_name = get_lock_name(file_hash, version)
 
-    # Add/Update source file, _metadata.json and _aliases.json on S3 (will be processed after we return response)
     background_tasks.add_task(
-        background_update_s3,
-        file_hash,
-        version,
-        filename,
-        file_content,
-        headers_data.content_type,
+        background_update_s3, file_hash, version, filename, file_content, headers_data.content_type
+    )
+
+    try:
+        processed_document, _ = await _resolve_document(
+            version=version,
+            file_hash=file_hash,
+            filename=filename,
+            file_content=file_content,
+            upstream_headers={
+                "Content-Type": headers_data.content_type,
+                "X-Filename": headers_data.x_filename,
+            },
+            s3_content_key=s3_content_key,
+            s3_metadata_key=s3_metadata_key,
+            s3_imgs_key=s3_imgs_key,
+            lock_name=lock_name,
+            force_reprocess=force_reprocess,
+        )
+    except redis.exceptions.LockError:
+        duration = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=504,
+            detail=f"RES [{version.value}] | LOCK TIMEOUT | File: {filename} | Duration: {duration:.0f} ms",
+        )
+    except Exception as e:
+        duration = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=502,
+            detail=f"RES [{version.value}] | UPSTREAM FAIL | File: {filename} | Duration: {duration:.0f} ms | Error: {str(e)}",
+        )
+
+    duration = (time.perf_counter() - start_time) * 1000
+    logger.info(f"RES [{version.value}] | Total: {duration:.0f} ms | File: {filename}")
+
+    return ResponseDocument(
+        page_content=processed_document.page_content,
+        metadata=processed_document.metadata,
     )
 
 
-    async with redis_manager.client.lock(
-        lock_name,
-        timeout=settings.REDIS_LOCK_TIMEOUT,
-        blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
-    ):
-        try:
-            # Cache hit
-            # if False:
-            if await s3_key_exists(s3_content_key):
-                s3_start = time.perf_counter()
+@app.put(
+    "/md/{version}/process/download",
+    response_class=Response,
+    responses={200: {"content": {"application/zstd": {}}, "description": "tar.zst archive"}},
+)
+async def process_document_download(
+        headers_data: Annotated[ExternalDocumentRequestHeaders, Header()],
+        version: Version,
+        background_tasks: BackgroundTasks,
+        api_key: Annotated[str, Depends(verify_api_key)],
+        file_content: Annotated[bytes, Body(media_type="application/octet-stream")],
+        force_reprocess: bool = Query(False),
+) -> Response:
+    start_time = time.perf_counter()
 
-                page_content = await s3_get_content(s3_content_key)
+    file_hash = compute_hash(file_content)
+    filename = headers_data.filename
 
-                # Metadata are optional
-                if await s3_key_exists(s3_metadata_key):
-                    metadata = await s3_get_pydantic(s3_metadata_key, Metadata)
-                else:
-                    metadata = None
+    logger.info(
+        f"REQ [{version.value}] | DOWNLOAD | File: {filename} | Hash: {file_hash} | ClientKey: {api_key[:4]}***"
+    )
 
-                s3_duration = (time.perf_counter() - s3_start) * 1000
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"RES [{version.value}] | CACHE HIT | Duration: {duration:.0f} ms | S3 Read: {s3_duration:.0f} ms | File: {filename}"
-                )
-                return ResponseDocument(
-                    page_content=page_content,
-                    metadata=metadata,
-                )
-            # Cache miss
-            else:
-                logger.info(
-                    f"PRC [{version.value}] | CACHE MISS | PROCESSING UPSTREAM | File: {filename}"
-                )
-                upstream_start = time.perf_counter()
+    _, s3_content_key, s3_metadata_key, s3_imgs_key = _build_s3_keys(file_hash, version)
+    lock_name = get_lock_name(file_hash, version)
 
-                # Form request
-                upstream_headers: dict[str, str] = {
-                    "Content-Type": headers_data.content_type,
-                    "X-Filename": headers_data.x_filename,
-                }
+    background_tasks.add_task(
+        background_update_s3, file_hash, version, filename, file_content, headers_data.content_type
+    )
 
-                # Send request
-                try:
-                    processed_document: ProcessedDocument = await call_upstream_backend(
-                        version=version,
-                        file_content=file_content,
-                        headers=upstream_headers,
-                        filename=filename,
-                    )
-                    upstream_duration = (time.perf_counter() - upstream_start) * 1000
+    try:
+        processed_document, from_cache = await _resolve_document(
+            version=version,
+            file_hash=file_hash,
+            filename=filename,
+            file_content=file_content,
+            upstream_headers={
+                "Content-Type": headers_data.content_type,
+                "X-Filename": headers_data.x_filename,
+            },
+            s3_content_key=s3_content_key,
+            s3_metadata_key=s3_metadata_key,
+            s3_imgs_key=s3_imgs_key,
+            lock_name=lock_name,
+            force_reprocess=force_reprocess,
+        )
+    except redis.exceptions.LockError:
+        duration = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=504,
+            detail=f"RES [{version.value}] | LOCK TIMEOUT | DOWNLOAD | File: {filename} | Duration: {duration:.0f} ms",
+        )
+    except Exception as e:
+        duration = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=502,
+            detail=f"RES [{version.value}] | UPSTREAM FAIL | DOWNLOAD | File: {filename} | Duration: {duration:.0f} ms | Error: {str(e)}",
+        )
 
-                    """
-                    Write to S3 the processed document:
-                    We don't use a background task as it should be quick to write and 
-                      we must ensure files are written before lock is released. 
-                    (We can't control who will win the next lock between this 
-                      back-grounded task and another process_document, it could
-                      result in requesting again the backend processor)
-                    """
-                    await update_s3_processed(
-                        processed_document,
-                        s3_content_key,
-                        s3_metadata_key,
-                        s3_imgs_key
-                    )
+    # Gather images: from S3 on cache hit, from ProcessedDocument on fresh upstream call
+    if from_cache:
+        images_bytes: dict[str, bytes] = await s3_get_imgs(s3_imgs_key)
+    else:
+        images_bytes = {
+            name: pil_to_bytes(img)
+            for name, img in processed_document.images.items()
+        }
 
-                    duration = (time.perf_counter() - start_time) * 1000
+    archive = build_tar_zst(processed_document.page_content, images_bytes, processed_document.metadata)
 
-                    logger.info(
-                        f"RES [{version.value}] | UPSTREAM OK | Total: {duration:.0f} ms | Upstream: {upstream_duration:.0f} ms | File: {filename}"
-                    )
+    duration = (time.perf_counter() - start_time) * 1000
+    logger.info(f"RES [{version.value}] | DOWNLOAD | Total: {duration:.0f} ms | File: {filename}")
 
-
-                    response_document = ResponseDocument(
-                        page_content=processed_document.page_content,
-                        metadata=processed_document.metadata
-                    )
-                    return response_document
-
-                except Exception as e:
-                    upstream_duration = (time.perf_counter() - upstream_start) * 1000
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"RES [{version.value}] | UPSTREAM FAIL | Upstream: {upstream_duration:.0f}ms | File: {filename} | Error: {str(e)}",
-                    )
-
-        except redis.exceptions.LockError:
-            duration = (time.perf_counter() - start_time) * 1000
-            raise HTTPException(
-                status_code=504,
-                detail=f"RES [{version.value}] | LOCK TIMEOUT | File: {filename} | Duration: {duration:.0f} ms",
-            )
-
-        except Exception as e:
-            duration = (time.perf_counter() - start_time) * 1000
-            raise HTTPException(
-                status_code=500,
-                detail=f"RES [{version.value}] | SYSTEM ERROR | File: {filename} | Duration: {duration:.0f} ms | Error: {str(e)}",
-            )
+    return Response(
+        content=archive,
+        media_type="application/zstd",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.tar.zst"'},
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)

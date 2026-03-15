@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     REDIS_BLOCKING_TIMEOUT: int = 9999999
     UPSTREAM_TIMEOUT: float = 9999999
 
+    FAILED_REQUESTS_S3_PREFIX: str = "failed_requests"
+
     # --- INCOMING AUTHENTICATION (Client -> Proxy) ---
     # Keys that clients (e.g. Open WebUI) must provide to use this gateway
     CLIENT_API_KEY_V100: str = "changeme"
@@ -55,19 +57,19 @@ class Settings(BaseSettings):
 
     # --- UPSTREAM CONFIGURATION (Proxy -> Backend) ---
 
-    # V1: paddleocrvl_server
+    # V1: foil-serve
     UPSTREAM_V100_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V100_API_KEY: str = "changeme"  # Key for the V1 backend
 
-    # V1: paddleocrvl_server + ministral-3-3b
+    # V1: foil-serve + ministral-3-3b
     UPSTREAM_V110_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V110_API_KEY: str = "changeme"  # Key for the V1 backend
 
-    # V1: paddleocrvl_server + ministral-3-14b
+    # V1: foil-serve + ministral-3-14b
     UPSTREAM_V120_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V120_API_KEY: str = "changeme"  # Key for the V1 backend
 
-    # V1: paddleocrvl_server + GLM-4.6V-Flash
+    # V1: foil-serve + GLM-4.6V-Flash
     UPSTREAM_V130_URL: str = "http://localhost:8081/v1/process"
     UPSTREAM_V130_API_KEY: str = "changeme"  # Key for the V1 backend
 
@@ -130,7 +132,7 @@ class Version(str, Enum):
     # Marker
     v_2_0_0 = "v2.0.0"
     v_2_1_0 = "v2.1.0"
-    v_2_2_0 = "v2.2.0"  # document extractor (dedicated video processing)
+    v_2_2_0 = "v2.2.0"  # document extractor ()
 
     # Chandra
     v_3_0_0 = "v3.0.0"
@@ -152,7 +154,7 @@ settings = Settings()
 VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
 
     Version.v_1_0_0: ProcessingConfig(
-        description="paddleocrvl_server (sans image description)",
+        description="foil-serve (sans image description)",
         upstream_url=settings.UPSTREAM_V100_URL,
         authorized_api_key=settings.CLIENT_API_KEY_V100,
         query_params={},
@@ -163,7 +165,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
     ),
 
     Version.v_1_1_0: ProcessingConfig(
-            description="paddleocrvl_server avec description image par ministral-3-3b",
+            description="foil-serve avec description image par ministral-3-3b",
             upstream_url=settings.UPSTREAM_V110_URL,
             authorized_api_key=settings.CLIENT_API_KEY_V110,
             query_params={
@@ -176,7 +178,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
         ),
 
     Version.v_1_2_0: ProcessingConfig(
-                description="paddleocrvl_server avec description image par ministral-3-14b",
+                description="foil-serve avec description image par ministral-3-14b",
                 upstream_url=settings.UPSTREAM_V120_URL,
                 authorized_api_key=settings.CLIENT_API_KEY_V120,
                 query_params={
@@ -189,7 +191,7 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
             ),
 
     Version.v_1_3_0: ProcessingConfig(
-                    description="paddleocrvl_server avec description image par GLM-4.6V-Flash",
+                    description="foil-serve avec description image par GLM-4.6V-Flash",
                     upstream_url=settings.UPSTREAM_V130_URL,
                     authorized_api_key=settings.CLIENT_API_KEY_V130,
                     query_params={
@@ -203,11 +205,11 @@ VERSION_CONFIGS: dict[Version, ProcessingConfig] = {
 
 
 
-    # ALL VERSION ARE SUBJECT TO CHANGE - NOT FOR PRODUCTION USE
+    # ALL VERSION BELOW ARE SUBJECT TO CHANGE - NOT FOR PRODUCTION USE
 
 
     Version.v_1_dev: ProcessingConfig(
-        description="paddleocrvl_server (pour le dev)",
+        description="foil-serve (pour le dev)",
         upstream_url="http://localhost:8081/v1/process",
         authorized_api_key="changeme",
         query_params={

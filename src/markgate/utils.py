@@ -1,8 +1,11 @@
 import base64
-from pathlib import Path
+import mimetypes
+import tarfile
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, TypeVar, Type, Any
 from io import BytesIO
+
+import zstandard
 
 import magic
 from fastapi import (
@@ -85,27 +88,104 @@ async def s3_put_content(key: str, content: str):
     )
 
 
+# Fast-path for the most common formats
+_PIL_FORMAT_TO_MIME: dict[str, str] = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+    "BMP": "image/bmp",
+    "TIFF": "image/tiff",
+    "GIF": "image/gif",
+}
+
+# Inverted PIL extension registry: {"JPEG": ".jpg", "PNG": ".png", ...}
+# Built once at import time. PIL maps extensions → formats; we need the reverse.
+_PIL_FORMAT_TO_EXT: dict[str, str] = {
+    fmt: ext for ext, fmt in Image.registered_extensions().items()
+}
+
+
+def _pil_format_to_mime(format_: str) -> str:
+    """Resolve a PIL format string to a MIME type.
+    Fast-path via known dict, then falls back to PIL's own extension registry + stdlib mimetypes.
+    """
+    if mime := _PIL_FORMAT_TO_MIME.get(format_):
+        return mime
+    if (ext := _PIL_FORMAT_TO_EXT.get(format_)) and (mime := mimetypes.types_map.get(ext.lower())):
+        return mime
+    return "application/octet-stream"
+
+
+def pil_to_bytes(img: Image.Image) -> bytes:
+    """Serialize a PIL image to bytes preserving its original format.
+    Falls back to JPEG if the format is unknown.
+    JPEG-specific options (quality, subsampling) are only applied for JPEG.
+    """
+    format_ = img.format or "JPEG"
+    buffer = BytesIO()
+    if format_ == "JPEG":
+        img.save(buffer, format=format_, quality=95, subsampling=0)
+    else:
+        img.save(buffer, format=format_)
+    return buffer.getvalue()
+
+
 async def s3_put_imgs(root_img_key: str, images: dict[str, Image.Image]):
-    """Envoie les images dans le S3 (si upstream processor les a fournis)"""
-    for filename, image in images.items():
-        # Clé S3 pour l'image (enforced jpg)
-        filename = Path(filename).with_suffix('.jpg').as_posix()
-        s3_key = f'{root_img_key}/{filename}'
-
-        # Sauvegarde objet pil dans buffer
-        buffer = BytesIO()
-        image.save(buffer, format='JPEG', quality=95, subsampling=0)
-        buffer.seek(0)
-
+    """Envoie les images dans le S3 en préservant le format original du backend processor."""
+    for name, image in images.items():
+        format_ = image.format or "JPEG"  # shared source of truth for both Body and ContentType
         await s3_manager.client.put_object(
             Bucket=settings.S3_BUCKET,
-            Key=s3_key,
-            Body=buffer,
-            ContentType='image/jpeg',
+            Key=f"{root_img_key}/{name}",
+            Body=pil_to_bytes(image),
+            ContentType=_pil_format_to_mime(format_),
         )
 
-async def s3_get_imgs(root_img_key: str):
-    raise NotImplementedError("Getting Image from S3 is not implemented yet.")
+async def s3_get_imgs(root_img_key: str) -> dict[str, bytes]:
+    """Retrieve all images stored under root_img_key prefix.
+    Returns {relative_path: bytes} where relative_path matches the original image names
+    and thus the Markdown image references (e.g. 'imgs/figure_1.jpg').
+    """
+    prefix = f"{root_img_key}/"
+    result: dict[str, bytes] = {}
+    response = await s3_manager.client.list_objects_v2(Bucket=settings.S3_BUCKET, Prefix=prefix)
+    for obj in response.get("Contents", []):
+        key: str = obj["Key"]
+        relative_path = key[len(prefix):]
+        if not relative_path:
+            continue
+        img_response = await s3_manager.client.get_object(Bucket=settings.S3_BUCKET, Key=key)
+        async with img_response["Body"] as stream:
+            result[relative_path] = await stream.read()
+    return result
+
+
+def build_tar_zst(
+    page_content: str,
+    images: dict[str, bytes],
+    metadata: BaseModel | None,
+) -> bytes:
+    """Build an in-memory tar.zst archive.
+
+    Archive layout (image paths are kept as-is to match Markdown references):
+        content.md
+        metadata.json
+        {img_name}     # e.g. imgs/figure_1.jpg
+    """
+    def _add(archive: tarfile.TarFile, name: str, data: bytes) -> None:
+        info = tarfile.TarInfo(name=name)
+        info.size = len(data)
+        archive.addfile(info, BytesIO(data))
+
+    tar_buf = BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        _add(tar, "content.md", page_content.encode("utf-8"))
+        if metadata is not None:
+            _add(tar, "metadata.json", metadata.model_dump_json().encode("utf-8"))
+        for img_name, img_bytes in images.items():
+            _add(tar, img_name, img_bytes)
+    tar_buf.seek(0)
+    return zstandard.ZstdCompressor().compress(tar_buf.read())
 
 
 

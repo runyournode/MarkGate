@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
@@ -9,10 +10,11 @@ from PIL import Image
 import httpx
 
 from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
-from schemas import S3Metadata, S3FileAliases, ProcessedDocument, Metadata
+from schemas import S3Metadata, S3FileAliases, ProcessedDocument, Metadata, FailedRequestInfo
 from utils import (
     s3_manager,
     s3_put_content,
+    s3_get_content,
     s3_put_imgs,
     s3_key_exists,
     s3_get_pydantic,
@@ -156,6 +158,107 @@ async def update_s3_processed(
         await s3_put_imgs(s3_imgs_key, processed_document.images)
 
 
+async def save_failed_request(
+    file_content: bytes,
+    filename: str,
+    file_hash: str,
+    version: Version,
+    error_message: str,
+    upstream_duration_ms: float,
+) -> None:
+    """Fire-and-forget: save failed request artifacts to S3 for debugging."""
+    now = datetime.now(tz=UTC)
+    prefix = f"{settings.FAILED_REQUESTS_S3_PREFIX}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
+    ext = get_extension(filename) or ".bin"
+    info = FailedRequestInfo(
+        timestamp=now,
+        version=version.value,
+        filename=filename,
+        file_hash=file_hash,
+        error_message=error_message,
+        upstream_duration_ms=upstream_duration_ms,
+    )
+    try:
+        await s3_manager.client.put_object(
+            Bucket=settings.S3_BUCKET,
+            Key=f"{prefix}/source{ext}",
+            Body=file_content,
+            ContentType="application/octet-stream",
+        )
+        await s3_put_pydantic(f"{prefix}/error.json", info)
+        logger.info(f"FAIL [{version.value}] | Saved failed request to S3 | Hash: {file_hash}")
+    except Exception as e:
+        logger.error(f"FAIL [{version.value}] | Could not save failed request to S3 | Error: {e}")
+
+
+async def _resolve_document(
+    version: Version,
+    file_hash: str,
+    filename: str,
+    file_content: bytes,
+    upstream_headers: dict[str, str],
+    s3_content_key: str,
+    s3_metadata_key: str,
+    s3_imgs_key: str,
+    lock_name: str,
+    force_reprocess: bool,
+) -> tuple[ProcessedDocument, bool]:
+    """Resolve a document from cache or by calling the upstream backend.
+
+    Returns (ProcessedDocument, from_cache).
+    On cache hit, ProcessedDocument.images is always empty — use s3_get_imgs() if images are needed.
+    On upstream failure, saves artifacts to failed_requests/ in S3 then re-raises.
+    """
+    async with redis_manager.client.lock(
+        lock_name,
+        timeout=settings.REDIS_LOCK_TIMEOUT,
+        blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
+    ):
+        if not force_reprocess and await s3_key_exists(s3_content_key):
+            s3_start = time.perf_counter()
+            page_content = await s3_get_content(s3_content_key)
+            metadata = (
+                await s3_get_pydantic(s3_metadata_key, Metadata)
+                if await s3_key_exists(s3_metadata_key)
+                else None
+            )
+            s3_duration = (time.perf_counter() - s3_start) * 1000
+            logger.info(
+                f"RES [{version.value}] | CACHE HIT | S3 Read: {s3_duration:.0f} ms | File: {filename}"
+            )
+            return ProcessedDocument(page_content=page_content, metadata=metadata, images={}), True
+
+        log_prefix = "FORCED REPROCESS" if force_reprocess else "CACHE MISS"
+        logger.info(f"PRC [{version.value}] | {log_prefix} | PROCESSING UPSTREAM | File: {filename}")
+
+        upstream_start = time.perf_counter()
+        try:
+            processed_document = await call_upstream_backend(
+                version=version,
+                file_content=file_content,
+                headers=upstream_headers,
+                filename=filename,
+            )
+        except Exception as e:
+            upstream_duration_ms = (time.perf_counter() - upstream_start) * 1000
+            asyncio.create_task(save_failed_request(
+                file_content=file_content,
+                filename=filename,
+                file_hash=file_hash,
+                version=version,
+                error_message=str(e),
+                upstream_duration_ms=upstream_duration_ms,
+            ))
+            raise
+
+        upstream_duration = (time.perf_counter() - upstream_start) * 1000
+        await update_s3_processed(processed_document, s3_content_key, s3_metadata_key, s3_imgs_key)
+        logger.info(
+            f"RES [{version.value}] | UPSTREAM OK | Upstream: {upstream_duration:.0f} ms | File: {filename}"
+        )
+        return processed_document, False
+
+
 async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
@@ -168,7 +271,7 @@ async def call_upstream_backend(
         # if config.custom_headers:  # api key(s) for the backend
         #     headers.update(config.custom_headers)
         match version:
-            case ( # routage vers paddleocrvl_server
+            case ( # routage vers foil-serve
                 Version.v_1_0_0 | Version.v_1_1_0 | Version.v_1_2_0
             ):
                 resp = await async_client.post(
@@ -182,6 +285,9 @@ async def call_upstream_backend(
 
                 # Get md and dict of images (b64) from response
                 page_content = data.get("page_content", "")
+                if not page_content:
+                    raise ValueError(f"Upstream returned empty page_content. Full response: {data}")
+
                 imgs: dict[str, str] = data.get("images", {})
 
                 # Get metadata from upstream processor (processing time, ...)
@@ -193,7 +299,7 @@ async def call_upstream_backend(
                 return ProcessedDocument(
                     page_content=page_content,
                     images=imgs,
-                    metadata=Metadata(meta), # empty for paddleocrvl_server
+                    metadata=Metadata(meta),
                 )
 
 
