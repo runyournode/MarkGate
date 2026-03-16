@@ -27,7 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 RUN apt update -y \
-    && apt upgrade \
+    && apt upgrade -y \
     && apt install -y --no-install-recommends \
         libmagic1 \
     && apt autoremove -y \
