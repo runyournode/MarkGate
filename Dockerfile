@@ -26,7 +26,7 @@ RUN groupadd -g 1000 app && \
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN apt update \
+RUN apt update -y \
     && apt upgrade \
     && apt install -y --no-install-recommends \
         libmagic1 \
