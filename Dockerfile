@@ -4,7 +4,7 @@
 
 FROM python:3.14-slim-trixie AS builder
 # Setup uv
-COPY --from=ghcr.io/astral-sh/uv:0.10.6-python3.14-trixie-slim /usr/local/bin/uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.10.12-python3.14-trixie-slim /usr/local/bin/uv /bin/uv
 # optionally config uv mirror repo
 
 WORKDIR /app
@@ -29,7 +29,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apt update -y \
     && apt upgrade -y \
     && apt install -y --no-install-recommends \
-        libmagic1 \
+        libmagic1t64 \
     && apt autoremove -y \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
@@ -37,9 +37,9 @@ RUN apt update -y \
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 COPY --chown=app:app src/markgate/ /app/
 
-# Pre-compile bytecode
-RUN python -m compileall -q -f /app \
-    && chown -R app:app /app
+# Pre-compile bytecode (optionnal, image is bigger)
+#RUN python -m compileall -q -f /app \
+#    && chown -R app:app /app
 
 # Add uvicorn in path
 ENV PATH="/app/.venv/bin:${PATH}"
@@ -50,3 +50,10 @@ WORKDIR /app
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0"]
 CMD ["--port", "8080"]
+
+ENV APP_PORT=8080
+HEALTHCHECK --interval=120s --timeout=15s --start-period=60s \
+  CMD python3 -c "import urllib.request, os; \
+      port = os.getenv('APP_PORT', '8080'); \
+      urllib.request.urlopen(f'http://localhost:{port}/health', timeout=15)" || exit 1
+
