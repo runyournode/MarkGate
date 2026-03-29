@@ -2,7 +2,7 @@ services:
   markgate_app:
     image: ghcr.io/runyournode/markgate:0.1.0
     container_name: markgate_app
-    extra_hosts:  # si le S3 n'est pas dans la stack
+    extra_hosts:  # if S3 is not in the stack
       - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
@@ -20,7 +20,7 @@ services:
     container_name: valkey
     expose:
       - "6379"
-    ports:  # todo : à passer en expose
+    ports:  # dev only
       - "6379:6379"
     volumes:
       - redis_data:/data
@@ -53,7 +53,9 @@ services:
       - dev-tools-docling
     image: ghcr.io/docling-project/docling-serve-cu128:v1.11.0
     container_name: docling-serve
-    ports: # à passer en expose
+    expose:
+      - "5001"
+    ports: # dev only
       - "5001:5001"
     env_file:
       - .env.d/dockling-serve.env

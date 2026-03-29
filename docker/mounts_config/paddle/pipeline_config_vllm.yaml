@@ -5,9 +5,7 @@ batch_size: 64
 
 use_queues: True
 
-# Ajout Mathieu
 use_ocr_for_image_block: True
-#
 
 use_doc_preprocessor: True
 use_layout_detection: True
