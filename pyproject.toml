@@ -25,10 +25,15 @@ dev = [
     "ruff==0.15.6",
     "ty==0.0.23",
     "types-aiobotocore[s3]>=3.0.0",
+    "tombi==0.9.11",
 ]
 
 [tool.ty.environment]
 extra-paths = ["src/markgate"]
+
+[[tool.tombi.schemas]]
+path = "schemas/backends.schema.json"
+include = ["**/backend_config.toml"]
 
 [build-system]
 requires = ["hatchling"]

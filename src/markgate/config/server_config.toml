@@ -1,0 +1,49 @@
+# server_config.toml — MarkGate infrastructure settings
+#
+# Non-secret infrastructure settings for MarkGate.
+# Secrets (S3_ACCESS_KEY, S3_SECRET_KEY, API keys) go in .env_secret.
+#
+# Priority: environment variables > .env_secret > this file > field defaults.
+# All keys are case-insensitive.
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+log_level = "INFO"
+log_file = "/var/log/markgate/markgate.log"
+log_max_bytes = 10485760   # 10 MB
+log_backup_count = 5
+
+# ---------------------------------------------------------------------------
+# S3 Cache Storage
+# ---------------------------------------------------------------------------
+s3_cache_enabled = false
+s3_endpoint = "http://localhost:3900"
+s3_bucket = "markgate-cache"
+s3_region = "garage"
+# s3_access_key and s3_secret_key go in .env_secret
+
+# ---------------------------------------------------------------------------
+# Redis (Distributed Locks)
+# ---------------------------------------------------------------------------
+redis_host = "localhost"
+redis_port = 6379
+redis_socket_timeout = 5.0  # should not be edited
+
+# ---------------------------------------------------------------------------
+# Processing Timeouts
+# ---------------------------------------------------------------------------
+redis_lock_timeout = 300        # Initial lock TTL (s), auto-extended during upstream calls
+redis_blocking_timeout = 9999999  # Max wait on a locked hash before returning 504
+upstream_timeout = 9999999        # Max wait for upstream backend response
+
+# ---------------------------------------------------------------------------
+# Failed Request Archiving
+# ---------------------------------------------------------------------------
+failed_requests_s3_prefix = "failed_requests"
+failed_requests_local_dir = "/tmp/markgate_failed"
+
+# ---------------------------------------------------------------------------
+# Config Paths
+# ---------------------------------------------------------------------------
+backend_config_path = "config/backend_config.toml"

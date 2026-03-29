@@ -1,25 +1,26 @@
 import asyncio
-import json
+import hashlib
 import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
-import hashlib
 from urllib.parse import quote, urlparse
 
 import httpx
 import redis
 from fastapi import BackgroundTasks, HTTPException
-from PIL import Image
 
-from config import VERSION_CONFIGS, ProcessingConfig, Version, settings
-from media import batch_b64_to_pil, get_mime_type, mime_to_ext
+from backends import BACKEND_HANDLERS
+from config.loader import VERSION_CONFIGS, Version
+from config.settings import settings
+from contracts import ProcessingConfig
+from schemas import Metadata
+from media import get_mime_type, mime_to_ext
 from schemas import (
     S3Metadata,
     S3FileAliases,
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
-    Metadata,
     FailedRequestInfo,
 )
 from storage import (
@@ -55,12 +56,16 @@ def get_lock_name(file_hash: str, version: Version) -> str:
 def build_s3_keys(file_hash: str, version: Version) -> tuple[str, str, str, str]:
     """Returns (s3_root_key, s3_content_key, s3_metadata_key, s3_imgs_key).
 
-    s3_root_key     : documents/{hash}/{version}
-    s3_content_key  : documents/{hash}/{version}/content.md
-    s3_metadata_key : documents/{hash}/{version}/metadata.json   (backend metadata)
-    s3_imgs_key     : documents/{hash}/{version}/images
+    s3_root_key     : documents/{hash}/{version_key}
+    s3_content_key  : documents/{hash}/{version_key}/content.md
+    s3_metadata_key : documents/{hash}/{version_key}/metadata.json   (backend metadata)
+    s3_imgs_key     : documents/{hash}/{version_key}/images
+
+    version_key is ProcessingConfig.cache_id if set, else version.value.
+    This allows renaming a version without invalidating existing S3 cache.
     """
-    root = f"documents/{file_hash}/{version.value}"
+    version_key = VERSION_CONFIGS[version].cache_id or version.value
+    root = f"documents/{file_hash}/{version_key}"
     return root, f"{root}/content.md", f"{root}/metadata.json", f"{root}/images"
 
 
@@ -74,9 +79,10 @@ def build_s3_bg_keys(
     cache_meta_key  : documents/{hash}/{version}/_metadata.json  (cache hit metadata)
     """
     ext = mime_to_ext(mime)
+    version_key = VERSION_CONFIGS[version].cache_id or version.value
     source_key = f"documents/{file_hash}/source{ext}"
     alias_key = f"documents/{file_hash}/_aliases.json"
-    cache_meta_key = f"documents/{file_hash}/{version.value}/_metadata.json"
+    cache_meta_key = f"documents/{file_hash}/{version_key}/_metadata.json"
     return source_key, alias_key, cache_meta_key
 
 
@@ -99,7 +105,7 @@ async def background_update_s3(
      - Depending on the hashfile
      - Depending on the hashfile + version
     """
-    if not settings.S3_CACHE_ENABLED:
+    if not settings.s3_cache_enabled:
         return
 
     source_key, alias_key, cache_meta_key = build_s3_bg_keys(file_hash, version, mime)
@@ -111,13 +117,13 @@ async def background_update_s3(
     async with (
         redis_manager.client.lock(
             lock_name_unversioned,
-            timeout=settings.REDIS_LOCK_TIMEOUT,
-            blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
+            timeout=settings.redis_lock_timeout,
+            blocking_timeout=settings.redis_blocking_timeout,
         ),
         redis_manager.client.lock(
             lock_name_versioned,
-            timeout=settings.REDIS_LOCK_TIMEOUT,
-            blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
+            timeout=settings.redis_lock_timeout,
+            blocking_timeout=settings.redis_blocking_timeout,
         ),
     ):
         step = "unknown"
@@ -130,7 +136,7 @@ async def background_update_s3(
                     f"BG [{version.value}] | Uploading source file: {filename} | Hash: {file_hash}"
                 )
                 await s3_manager.client.put_object(
-                    Bucket=settings.S3_BUCKET,
+                    Bucket=settings.s3_bucket,
                     Key=source_key,
                     Body=content,
                     ContentType=mime,
@@ -224,7 +230,7 @@ async def save_failed_request(
     Tries S3 first (if enabled), then falls back to FAILED_REQUESTS_LOCAL_DIR.
     """
     now = datetime.now(tz=UTC)
-    prefix = f"{settings.FAILED_REQUESTS_S3_PREFIX}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
+    prefix = f"{settings.failed_requests_s3_prefix}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
     mime = await asyncio.to_thread(get_mime_type, file_content)
     ext = mime_to_ext(mime)
     info = FailedRequestInfo(
@@ -239,7 +245,7 @@ async def save_failed_request(
     if s3_is_active():
         try:
             await s3_manager.client.put_object(
-                Bucket=settings.S3_BUCKET,
+                Bucket=settings.s3_bucket,
                 Key=f"{prefix}/source{ext}",
                 Body=file_content,
                 ContentType=mime,
@@ -254,9 +260,9 @@ async def save_failed_request(
                 f"FAIL [{version.value}] | Could not save failed request to S3, trying local fallback | Error: {e}"
             )
 
-    if settings.FAILED_REQUESTS_LOCAL_DIR:
+    if settings.failed_requests_local_dir:
         try:
-            local_dir = FilePath(settings.FAILED_REQUESTS_LOCAL_DIR) / prefix
+            local_dir = FilePath(settings.failed_requests_local_dir) / prefix
             local_dir.mkdir(parents=True, exist_ok=True)
             (local_dir / f"source{ext}").write_bytes(file_content)
             (local_dir / "error.json").write_text(info.model_dump_json())
@@ -310,8 +316,8 @@ async def _resolve_document(
     """
     lock = redis_manager.client.lock(
         lock_name,
-        timeout=settings.REDIS_LOCK_TIMEOUT,
-        blocking_timeout=settings.REDIS_BLOCKING_TIMEOUT,
+        timeout=settings.redis_lock_timeout,
+        blocking_timeout=settings.redis_blocking_timeout,
         raise_on_release_error=False,
     )
     async with lock:
@@ -342,7 +348,7 @@ async def _resolve_document(
 
         if force_reprocess:
             log_prefix = "FORCED REPROCESS"
-        elif not settings.S3_CACHE_ENABLED:
+        elif not settings.s3_cache_enabled:
             log_prefix = "CACHE DISABLED"
         elif not s3_ok:
             log_prefix = "CACHE NOT REACHEABLE"
@@ -353,7 +359,7 @@ async def _resolve_document(
         )
 
         upstream_start = time.perf_counter()
-        extend_interval = max(10.0, settings.REDIS_LOCK_TIMEOUT / 2)
+        extend_interval = max(10.0, settings.redis_lock_timeout / 2)
         extender = asyncio.create_task(_keep_lock_alive(lock, extend_interval))
         try:
             processed_document = await call_upstream_backend(
@@ -408,139 +414,24 @@ async def _resolve_document(
 # Upstream backend call
 # ---------------------------------------------------------------------------
 
-# Headers sent by the client that must never be forwarded to upstream backends.
-# The backend uses its own credentials (defined in ProcessingConfig.custom_headers).
-_CLIENT_HEADERS_BLOCKLIST: frozenset[str] = frozenset({"authorization"})
-
-
-def _merge_headers(
-    upstream_headers: dict[str, str], custom_headers: dict[str, str]
-) -> dict[str, str]:
-    """Build the consolidated headers dict to send to the upstream backend.
-
-    - Client authentication headers (blocklist) are stripped from upstream_headers.
-    - custom_headers (config) wins on any key conflict.
-    """
-    filtered = {
-        k: v
-        for k, v in upstream_headers.items()
-        if k.lower() not in _CLIENT_HEADERS_BLOCKLIST
-    }
-    return {**filtered, **custom_headers}
-
 
 async def call_upstream_backend(
     version: Version, file_content: bytes, headers: dict[str, str], filename: str
 ) -> ProcessedDocument:
     """Send the file to the appropriate upstream backend and return a ProcessedDocument.
 
-    Routing is version-based. Raises on non-2xx HTTP status or empty page_content.
+    Routing is backend_type-based (from versions.toml). Raises on unknown backend,
+    non-2xx HTTP status, or empty page_content.
     """
-    async with httpx.AsyncClient(timeout=settings.UPSTREAM_TIMEOUT) as async_client:
-        config: ProcessingConfig = VERSION_CONFIGS[version]
-        match version:
-            case (  # route to foil-serve
-                Version.v_1_0_0 | Version.v_1_1_0 | Version.v_1_2_0
-            ):
-                resp = await async_client.post(
-                    url=config.upstream_url,
-                    content=file_content,
-                    params=config.query_params,
-                    headers=_merge_headers(headers, config.custom_headers),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                # Get md and dict of images (b64) from response
-                page_content = data.get("page_content", "")
-                if not page_content:
-                    raise ValueError(
-                        f"Upstream returned empty page_content. Full response: {data}"
-                    )
-
-                imgs_b64: dict[str, str] = data.get("images", {})
-
-                # Get metadata from upstream processor (processing time, ...)
-                meta = data.get("metadata", {})
-
-                # Decode base64 images to PIL in a thread (CPU-bound)
-                imgs: dict[str, Image.Image] = await asyncio.to_thread(
-                    batch_b64_to_pil, imgs_b64
-                )
-
-                return ProcessedDocument(
-                    page_content=page_content,
-                    images=imgs,
-                    metadata=Metadata(meta),
-                )
-
-            case Version.v_4_0_0:  # route to docling
-                merged = _merge_headers(headers, config.custom_headers)
-                # Content-Type in the files tuple sets the MIME of the uploaded part.
-                # It must NOT appear in the request-level headers: httpx sets
-                # Content-Type: multipart/form-data; boundary=... automatically and
-                # an explicit override would break the boundary declaration.
-                files = {"files": (filename, file_content, merged["Content-Type"])}
-                request_headers = {
-                    k: v for k, v in merged.items() if k.lower() != "content-type"
-                }
-
-                # debug
-                # url = "http://localhost:5001/v1/convert/file"
-                # parameters = {
-                #     "from_formats": [
-                #         "docx",
-                #         "pptx",
-                #         "html",
-                #         "image",
-                #         "pdf",
-                #         "asciidoc",
-                #         "md",
-                #         "xlsx",
-                #     ],
-                #     "to_formats": ["md", "json", "html", "text", "doctags"],
-                #     "image_export_mode": "placeholder",
-                #     "do_ocr": True,
-                #     "force_ocr": False,
-                #     "ocr_engine": "easyocr",
-                #     "ocr_lang": ["en"],
-                #     "pdf_backend": "dlparse_v2",
-                #     "table_mode": "fast",
-                #     "abort_on_error": False,
-                # }
-                # resp = await async_client.post(url, files=files, data=parameters, headers=config.custom_headers)
-
-                form_data = {
-                    k: json.dumps(v) if isinstance(v, dict) else v
-                    for k, v in config.query_params.items()
-                }
-                resp = await async_client.post(
-                    url=config.upstream_url,
-                    files=files,
-                    data=form_data,
-                    headers=request_headers,
-                )
-                resp.raise_for_status()
-
-                data = resp.json()
-
-                page_content = data.get("document", {}).get("md_content", "")
-
-                return ProcessedDocument(
-                    page_content=page_content,
-                    metadata=Metadata(
-                        {
-                            "status": data.get("status"),
-                            "processing_time": data.get("processing_time"),
-                            "errors": data.get("errors"),
-                        }
-                    ),
-                    images={},
-                )
-
-            case _:
-                # Standard PUT for other backends (Marker, etc.)
-                raise NotImplementedError()
+    config: ProcessingConfig = VERSION_CONFIGS[version]
+    handler = BACKEND_HANDLERS.get(config.backend_type)
+    if handler is None:
+        raise NotImplementedError(
+            f"No backend handler registered for backend_type='{config.backend_type}'. "
+            f"Available: {list(BACKEND_HANDLERS)}"
+        )
+    async with httpx.AsyncClient(timeout=settings.upstream_timeout) as async_client:
+        return await handler(config, file_content, headers, filename, async_client)
 
 
 # ---------------------------------------------------------------------------

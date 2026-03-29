@@ -1,0 +1,387 @@
+{
+  "$defs": {
+    "DoclingConfig": {
+      "properties": {
+        "backend_type": {
+          "const": "docling",
+          "title": "Backend Type",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "upstream_url": {
+          "title": "Upstream Url",
+          "type": "string"
+        },
+        "authorized_api_key": {
+          "title": "Authorized Api Key",
+          "type": "string"
+        },
+        "custom_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Custom Headers",
+          "type": "object"
+        },
+        "cache_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Id"
+        },
+        "query_params": {
+          "$ref": "#/$defs/DoclingQueryParams",
+          "default": {
+            "from_formats": null,
+            "to_formats": [
+              "md"
+            ],
+            "image_export_mode": "placeholder",
+            "include_images": true,
+            "do_ocr": true,
+            "force_ocr": false,
+            "ocr_engine": "auto",
+            "ocr_lang": null,
+            "pdf_backend": "docling_parse",
+            "do_table_structure": true,
+            "table_mode": "fast",
+            "table_cell_matching": true,
+            "abort_on_error": false,
+            "do_picture_classification": false,
+            "do_picture_description": false,
+            "picture_description_area_threshold": 0.0,
+            "picture_description_preset": null,
+            "picture_description_api": null,
+            "do_formula_enrichment": false,
+            "do_code_enrichment": false,
+            "md_page_break_placeholder": ""
+          }
+        }
+      },
+      "required": [
+        "backend_type",
+        "description",
+        "upstream_url",
+        "authorized_api_key"
+      ],
+      "title": "DoclingConfig",
+      "type": "object"
+    },
+    "DoclingQueryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "from_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Formats"
+        },
+        "to_formats": {
+          "default": [
+            "md"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "To Formats",
+          "type": "array"
+        },
+        "image_export_mode": {
+          "default": "placeholder",
+          "enum": [
+            "embedded",
+            "referenced",
+            "placeholder"
+          ],
+          "title": "Image Export Mode",
+          "type": "string"
+        },
+        "include_images": {
+          "default": true,
+          "title": "Include Images",
+          "type": "boolean"
+        },
+        "do_ocr": {
+          "default": true,
+          "title": "Do Ocr",
+          "type": "boolean"
+        },
+        "force_ocr": {
+          "default": false,
+          "title": "Force Ocr",
+          "type": "boolean"
+        },
+        "ocr_engine": {
+          "default": "auto",
+          "title": "Ocr Engine",
+          "type": "string"
+        },
+        "ocr_lang": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ocr Lang"
+        },
+        "pdf_backend": {
+          "default": "docling_parse",
+          "enum": [
+            "docling_parse",
+            "pypdfium2",
+            "dlparse_v1",
+            "dlparse_v2",
+            "dlparse_v4"
+          ],
+          "title": "Pdf Backend",
+          "type": "string"
+        },
+        "do_table_structure": {
+          "default": true,
+          "title": "Do Table Structure",
+          "type": "boolean"
+        },
+        "table_mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "accurate"
+          ],
+          "title": "Table Mode",
+          "type": "string"
+        },
+        "table_cell_matching": {
+          "default": true,
+          "title": "Table Cell Matching",
+          "type": "boolean"
+        },
+        "abort_on_error": {
+          "default": false,
+          "title": "Abort On Error",
+          "type": "boolean"
+        },
+        "do_picture_classification": {
+          "default": false,
+          "title": "Do Picture Classification",
+          "type": "boolean"
+        },
+        "do_picture_description": {
+          "default": false,
+          "title": "Do Picture Description",
+          "type": "boolean"
+        },
+        "picture_description_area_threshold": {
+          "default": 0.0,
+          "title": "Picture Description Area Threshold",
+          "type": "number"
+        },
+        "picture_description_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Picture Description Preset"
+        },
+        "picture_description_api": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PictureDescriptionApiConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "do_formula_enrichment": {
+          "default": false,
+          "title": "Do Formula Enrichment",
+          "type": "boolean"
+        },
+        "do_code_enrichment": {
+          "default": false,
+          "title": "Do Code Enrichment",
+          "type": "boolean"
+        },
+        "md_page_break_placeholder": {
+          "default": "",
+          "title": "Md Page Break Placeholder",
+          "type": "string"
+        }
+      },
+      "title": "DoclingQueryParams",
+      "type": "object"
+    },
+    "FoilConfig": {
+      "properties": {
+        "backend_type": {
+          "const": "foil",
+          "title": "Backend Type",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "upstream_url": {
+          "title": "Upstream Url",
+          "type": "string"
+        },
+        "authorized_api_key": {
+          "title": "Authorized Api Key",
+          "type": "string"
+        },
+        "custom_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Custom Headers",
+          "type": "object"
+        },
+        "cache_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Id"
+        },
+        "query_params": {
+          "$ref": "#/$defs/FoilQueryParams",
+          "default": {
+            "image_description_model_name": ""
+          }
+        }
+      },
+      "required": [
+        "backend_type",
+        "description",
+        "upstream_url",
+        "authorized_api_key"
+      ],
+      "title": "FoilConfig",
+      "type": "object"
+    },
+    "FoilQueryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "image_description_model_name": {
+          "default": "",
+          "title": "Image Description Model Name",
+          "type": "string"
+        }
+      },
+      "title": "FoilQueryParams",
+      "type": "object"
+    },
+    "PictureDescriptionApiConfig": {
+      "additionalProperties": false,
+      "description": "Config for picture description via an OpenAI-compatible API endpoint.",
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Headers",
+          "type": "object"
+        },
+        "params": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Params",
+          "type": "object"
+        },
+        "timeout": {
+          "default": 20.0,
+          "title": "Timeout",
+          "type": "number"
+        },
+        "concurrency": {
+          "default": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "prompt": {
+          "default": "You are a document analysis expert who specializes in creating text descriptions for images.\nYou will receive an image of a picture or figure. Your job is to create a short description of the image.\nInstructions:\n1. Carefully examine the provided image.\n2. Output a faithful description of the image with enough specific detail to accurately reconstruct it.\nIf the image is a figure or contains alpha-numeric data, include that data in the output.",
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "PictureDescriptionApiConfig",
+      "type": "object"
+    }
+  },
+  "description": "Root schema for backend_config.toml.",
+  "properties": {
+    "backends": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "docling": "#/$defs/DoclingConfig",
+            "foil": "#/$defs/FoilConfig"
+          },
+          "propertyName": "backend_type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/FoilConfig"
+          },
+          {
+            "$ref": "#/$defs/DoclingConfig"
+          }
+        ]
+      },
+      "title": "Backends",
+      "type": "object"
+    }
+  },
+  "required": [
+    "backends"
+  ],
+  "title": "BackendConfig",
+  "type": "object"
+}

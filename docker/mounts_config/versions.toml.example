@@ -1,0 +1,112 @@
+# versions.toml — MarkGate processing version configuration
+#
+# Each entry under [versions.*] declares one processing version exposed
+# on the PUT /md/{version}/process endpoint.
+#
+# Secrets are referenced via ${VAR_NAME} and resolved from .env / .env.secret
+# (or real environment variables). The application will refuse to start if any
+# referenced variable is missing.
+#
+# backend_type must match a registered handler in backends/BACKEND_HANDLERS:
+#   "foil"    — Foil-serve (raw bytes POST, optional VLM image description)
+#   "docling" — Docling-serve (multipart POST, rich OCR/layout options)
+
+
+# ---------------------------------------------------------------------------
+# Foil — basic, no VLM
+# ---------------------------------------------------------------------------
+
+[versions.foil]
+backend_type = "foil"
+description = "Foil-serve — layout analysis only, no image description"
+upstream_url = "${UPSTREAM_FOIL_URL}"
+authorized_api_key = "${CLIENT_API_KEY_FOIL}"
+
+[versions.foil.custom_headers]
+Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
+
+[versions.foil.query_params]
+image_description_model_name = ""
+
+
+# ---------------------------------------------------------------------------
+# Foil — with Mistral-3B VLM image description
+# ---------------------------------------------------------------------------
+
+[versions.foil-mistral-3b]
+backend_type = "foil"
+description = "Foil-serve with Mistral-3B for image description"
+upstream_url = "${UPSTREAM_FOIL_URL}"
+authorized_api_key = "${CLIENT_API_KEY_FOIL_MISTRAL3B}"
+
+[versions.foil-mistral-3b.custom_headers]
+Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
+
+[versions.foil-mistral-3b.query_params]
+image_description_model_name = "mistral-3b"
+
+
+# ---------------------------------------------------------------------------
+# Docling — standard OCR, no image description
+# ---------------------------------------------------------------------------
+
+[versions.docling]
+backend_type = "docling"
+description = "Docling-serve — standard OCR with tesseract"
+upstream_url = "${UPSTREAM_DOCLING_URL}"
+authorized_api_key = "${CLIENT_API_KEY_DOCLING}"
+
+[versions.docling.custom_headers]
+X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
+
+[versions.docling.query_params]
+to_formats = ["md"]
+image_export_mode = "placeholder"
+include_images = false
+do_ocr = true
+force_ocr = true
+ocr_engine = "tesseract"
+ocr_lang = ["en", "fr"]
+pdf_backend = "dlparse_v2"
+table_mode = "accurate"
+do_formula_enrichment = true
+
+
+# ---------------------------------------------------------------------------
+# Docling — with image description via OpenAI-compatible VLM API
+# ---------------------------------------------------------------------------
+
+[versions.docling-vl]
+backend_type = "docling"
+description = "Docling-serve with VLM image description via vLLM"
+upstream_url = "${UPSTREAM_DOCLING_URL}"
+authorized_api_key = "${CLIENT_API_KEY_DOCLING_VL}"
+
+[versions.docling-vl.custom_headers]
+X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
+
+[versions.docling-vl.query_params]
+to_formats = ["md"]
+image_export_mode = "placeholder"
+include_images = false
+do_ocr = true
+force_ocr = true
+ocr_engine = "tesseract"
+ocr_lang = ["en", "fr"]
+pdf_backend = "dlparse_v2"
+table_mode = "accurate"
+do_formula_enrichment = true
+do_picture_description = true
+picture_description_area_threshold = 0.01
+
+[versions.docling-vl.query_params.picture_description_api]
+url = "${UPSTREAM_VLM_URL}"
+timeout = 60
+concurrency = 10
+
+[versions.docling-vl.query_params.picture_description_api.headers]
+Authorization = "Bearer ${UPSTREAM_VLM_API_KEY}"
+
+[versions.docling-vl.query_params.picture_description_api.params]
+model = "${UPSTREAM_VLM_MODEL}"
+max_completion_tokens = 500

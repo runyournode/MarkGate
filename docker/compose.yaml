@@ -2,12 +2,14 @@ services:
   markgate_app:
     image: ghcr.io/runyournode/markgate:0.1.0
     container_name: markgate_app
-    extra_hosts:  # if S3 is not in the stack
+    extra_hosts:  # if S3 is not in the stack (and is localhost)
       - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
     env_file:
       - .env.d/markgate.env
+    volumes:
+      - ./mounts_config/backend_config.toml:/app/backend_config.toml:ro
     depends_on:
      valkey:
           condition: service_healthy
@@ -47,7 +49,7 @@ services:
       - markgate-network-internal
 
 
-  # Upstream processing backend : an example with docling-serve
+  # Upstream processing backend : an example with docling-serve - untested - dev only
   docling-serve:
     profiles:
       - dev-tools-docling
@@ -73,56 +75,56 @@ services:
     networks:
       - markgate-network-internal
 
-  paddleocr-vl-api:
-    profiles:
-      - dev-tools-paddle
-    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:${API_IMAGE_TAG_SUFFIX}
-    container_name: paddleocr-vl-api
-    ports:
-      - "8081:8080"
-    depends_on:
-      paddleocr-vlm-server:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: [ "0" ]
-              capabilities: [ gpu ]
-    # TODO: Allow using a regular user
-    user: root
-    restart: unless-stopped
-    environment:
-      - VLM_BACKEND=${VLM_BACKEND:-vllm}
-    volumes:
-      - ./mounts_config/paddle/pipeline_config_vllm.yaml:/home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml
-    command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml"
-    networks:
-      - markgate-network-internal
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
 
-  paddleocr-vlm-server:
-    profiles:
-      - dev-tools-paddle
-    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-${VLM_BACKEND}-server:${VLM_IMAGE_TAG_SUFFIX}
-    container_name: paddleocr-vlm-server
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: [ "0" ]
-              capabilities: [ gpu ]
-    # TODO: Allow using a regular user
-    user: root
-    restart: unless-stopped
-    networks:
-      - markgate-network-internal
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
-      start_period: 300s
+# OLD for reference only :
+#  paddleocr-vl-api:
+#    profiles:
+#      - dev-tools-paddle
+#    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:${API_IMAGE_TAG_SUFFIX}
+#    container_name: paddleocr-vl-api
+#    ports:
+#      - "8081:8080"
+#    depends_on:
+#      paddleocr-vlm-server:
+#        condition: service_healthy
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              device_ids: [ "0" ]
+#              capabilities: [ gpu ]
+#    user: root
+#    restart: unless-stopped
+#    environment:
+#      - VLM_BACKEND=${VLM_BACKEND:-vllm}
+#    volumes:
+#      - ./mounts_config/paddle/pipeline_config_vllm.yaml:/home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml
+#    command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_${VLM_BACKEND}.yaml"
+#    networks:
+#      - markgate-network-internal
+#    healthcheck:
+#      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+#
+#  paddleocr-vlm-server:
+#    profiles:
+#      - dev-tools-paddle
+#    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-${VLM_BACKEND}-server:${VLM_IMAGE_TAG_SUFFIX}
+#    container_name: paddleocr-vlm-server
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              device_ids: [ "0" ]
+#              capabilities: [ gpu ]
+#    user: root
+#    restart: unless-stopped
+#    networks:
+#      - markgate-network-internal
+#    healthcheck:
+#      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+#      start_period: 300s
 
 volumes:
   redis_data:

@@ -3,7 +3,7 @@ import logging
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from config import Version, VERSION_CONFIGS
+from config.loader import Version, VERSION_CONFIGS
 
 logger = logging.getLogger("markgate")
 

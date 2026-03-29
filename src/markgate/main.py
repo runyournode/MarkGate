@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi_offline import FastAPIOffline
 
-from config import settings
+from config.settings import settings
 from media import build_tar_zst, batch_pil_to_bytes
 from schemas import (
     ExternalDocumentRequestHeaders,
@@ -29,11 +29,11 @@ from schemas import (
 from security import verify_api_key
 from services import check_backends_health, resolve_request
 from storage import check_redis_health, check_s3_health, lifespan, s3_get_imgs
-from config import Version
+from config.loader import Version
 
 # --- Logging Configuration ---
 logger = logging.getLogger("markgate")
-logger.setLevel(settings.LOG_LEVEL)
+logger.setLevel(settings.log_level)
 formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
@@ -42,11 +42,11 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-if settings.LOG_FILE:
+if settings.log_file:
     file_handler = RotatingFileHandler(
-        settings.LOG_FILE,
-        maxBytes=settings.LOG_MAX_BYTES,
-        backupCount=settings.LOG_BACKUP_COUNT,
+        settings.log_file,
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
