@@ -51,13 +51,12 @@ image_description_model_name = "ministral-3-3b"
 
 # BELOW IS UNTESTED - DEV IN PROGRESS
 
-
 # ---------------------------------------------------------------------------
 # Foil — with Ministral-3B VLM image description
 # ---------------------------------------------------------------------------
 
 [backends."foil-qwen-3.5-27b"]
-description = "Foil-serve with Qwen-3.5-27B"
+description = "Foil-serve with Qwen-3.5-27B (no think)"
 backend_type = "foil"
 cache_id = "foil-qwen3.5-27b"
 upstream_url = "http://localhost:8081"
