@@ -1,65 +1,90 @@
-# versions.toml — MarkGate processing version configuration
+# backend_config.toml — MarkGate backend configuration
 #
-# Each entry under [versions.*] declares one processing version exposed
+# Each entry under [backends.*] declares one processing version exposed
 # on the PUT /md/{version}/process endpoint.
 #
-# Secrets are referenced via ${VAR_NAME} and resolved from .env / .env.secret
+# API keys are referenced via ${VAR_NAME} and resolved from .env_secret
 # (or real environment variables). The application will refuse to start if any
 # referenced variable is missing.
 #
 # backend_type must match a registered handler in backends/BACKEND_HANDLERS:
 #   "foil"    — Foil-serve (raw bytes POST, optional VLM image description)
 #   "docling" — Docling-serve (multipart POST, rich OCR/layout options)
+#
+# cache_id: optional stable S3 cache key. When renaming a backend entry,
+#   set cache_id to the old name to preserve existing cached results.
+#   Example: renaming "docling-v2" to "docling" → set cache_id = "docling-v2"
 
 
 # ---------------------------------------------------------------------------
 # Foil — basic, no VLM
 # ---------------------------------------------------------------------------
 
-[versions.foil]
+[backends.foil]
+description = "Foil-serve — no image description"
 backend_type = "foil"
-description = "Foil-serve — layout analysis only, no image description"
-upstream_url = "${UPSTREAM_FOIL_URL}"
+cache_id = "foil"
+upstream_url = "http://foil-serve:8081/v1/process"
 authorized_api_key = "${CLIENT_API_KEY_FOIL}"
 
-[versions.foil.custom_headers]
+[backends.foil.custom_headers]
 Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 
-[versions.foil.query_params]
-image_description_model_name = ""
-
 
 # ---------------------------------------------------------------------------
-# Foil — with Mistral-3B VLM image description
+# Foil — with Ministral-3B VLM image description
 # ---------------------------------------------------------------------------
 
-[versions.foil-mistral-3b]
+[backends.foil-ministral-3-3b]
+description = "Foil-serve with Ministral-3-3B image description"
 backend_type = "foil"
-description = "Foil-serve with Mistral-3B for image description"
-upstream_url = "${UPSTREAM_FOIL_URL}"
-authorized_api_key = "${CLIENT_API_KEY_FOIL_MISTRAL3B}"
+cache_id = "foil-ministral-3-3b"
+upstream_url = "http://foil-serve:8081/v1/process"
+authorized_api_key = "${CLIENT_API_KEY_FOIL_MINISTRAL_3_3B}"
 
-[versions.foil-mistral-3b.custom_headers]
+[backends.foil-ministral-3-3b.custom_headers]
 Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 
-[versions.foil-mistral-3b.query_params]
-image_description_model_name = "mistral-3b"
+[backends.foil-ministral-3-3b.query_params]
+image_description_model_name = "ministral-3-3b"
+
+
+# BELOW IS UNTESTED - DEV IN PROGRESS
+
+# ---------------------------------------------------------------------------
+# Foil — with Qwen3.5-27B VLM image description
+# ---------------------------------------------------------------------------
+
+[backends."foil-qwen-3.5-27b"]
+description = "Foil-serve with Qwen-3.5-27B (no think)"
+backend_type = "foil"
+cache_id = "foil-qwen3.5-27b"
+upstream_url = "http://foil-serve:8081/v1/process"
+authorized_api_key = "${CLIENT_API_KEY_FOIL_QWEN_3.5_27B}"
+
+[backends."foil-qwen-3.5-27b".custom_headers]
+Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
+
+[backends."foil-qwen-3.5-27b".query_params]
+image_description_model_name = "qwen-3.5-27b"
+
+
 
 
 # ---------------------------------------------------------------------------
 # Docling — standard OCR, no image description
 # ---------------------------------------------------------------------------
 
-[versions.docling]
+[backends.docling]
 backend_type = "docling"
 description = "Docling-serve — standard OCR with tesseract"
-upstream_url = "${UPSTREAM_DOCLING_URL}"
+upstream_url = "http://docling-serve:5001"
 authorized_api_key = "${CLIENT_API_KEY_DOCLING}"
 
-[versions.docling.custom_headers]
+[backends.docling.custom_headers]
 X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
 
-[versions.docling.query_params]
+[backends.docling.query_params]
 to_formats = ["md"]
 image_export_mode = "placeholder"
 include_images = false
@@ -76,16 +101,16 @@ do_formula_enrichment = true
 # Docling — with image description via OpenAI-compatible VLM API
 # ---------------------------------------------------------------------------
 
-[versions.docling-vl]
+[backends.docling-vl]
 backend_type = "docling"
-description = "Docling-serve with VLM image description via vLLM"
-upstream_url = "${UPSTREAM_DOCLING_URL}"
+description = "Docling-serve with Ministral-3B image description via vLLM"
+upstream_url = "http://docling-serve:5001"
 authorized_api_key = "${CLIENT_API_KEY_DOCLING_VL}"
 
-[versions.docling-vl.custom_headers]
+[backends.docling-vl.custom_headers]
 X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
 
-[versions.docling-vl.query_params]
+[backends.docling-vl.query_params]
 to_formats = ["md"]
 image_export_mode = "placeholder"
 include_images = false
@@ -99,14 +124,14 @@ do_formula_enrichment = true
 do_picture_description = true
 picture_description_area_threshold = 0.01
 
-[versions.docling-vl.query_params.picture_description_api]
-url = "${UPSTREAM_VLM_URL}"
+[backends.docling-vl.query_params.picture_description_api]
+url = "http://vlm-server:8000/v1/chat/completions"
 timeout = 60
 concurrency = 10
 
-[versions.docling-vl.query_params.picture_description_api.headers]
+[backends.docling-vl.query_params.picture_description_api.headers]
 Authorization = "Bearer ${UPSTREAM_VLM_API_KEY}"
 
-[versions.docling-vl.query_params.picture_description_api.params]
-model = "${UPSTREAM_VLM_MODEL}"
+[backends.docling-vl.query_params.picture_description_api.params]
+model = "ministral-3b"
 max_completion_tokens = 500

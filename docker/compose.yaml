@@ -1,25 +1,33 @@
+name: markgate
+
 services:
   markgate_app:
-    image: ghcr.io/runyournode/markgate:0.1.0
+#    image: ghcr.io/runyournode/markgate:0.1.0 # not in conf anymore
+    image: ghcr.io/runyournode/markgate:sha-7d83170
     container_name: markgate_app
-    extra_hosts:  # if S3 is not in the stack (and is localhost)
-      - "host.docker.internal:host-gateway"
+    extra_hosts:
+      - "garage:host-gateway"
+      - "foil-serve:host-gateway"
     ports:
       - "8080:8080"
-    env_file:
-      - .env.d/markgate.env
     volumes:
-      - ./mounts_config/backend_config.toml:/app/backend_config.toml:ro
+      # Config
+      - ./mounts_config/markgate/config/backend_config.toml:/app/config/backend_config.toml:Z,ro
+      - ./mounts_config/markgate/config/server_config.toml:/app/config/server_config.toml:Z,ro
+      - ./mounts_config/markgate/config/.env.secret:/app/config/.env.secret:Z,ro
+      # Optional runtime
+      - ./mounts_runtime/markgate/log/:/var/log/markgate/:Z
+      - ./mounts_runtime/markgate/markgate_failed/:/tmp/markgate_failed:Z
     depends_on:
-     valkey:
+     markgate_valkey:
           condition: service_healthy
     networks:
       - markgate-network-internal
 
   # Hard dependency : valkey (redis) used for locks
-  valkey:
+  markgate_valkey:
     image: docker.io/valkey/valkey:9.0.1-alpine3.23
-    container_name: valkey
+    container_name: markgate_valkey
     expose:
       - "6379"
     ports:  # dev only
@@ -30,7 +38,7 @@ services:
     healthcheck:
       test: "[ $$(valkey-cli ping) = 'PONG' ]"
       start_period: 5s
-      interval: 10s
+      interval: 30s
       timeout: 3s
       retries: 5
     restart: unless-stopped

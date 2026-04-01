@@ -200,17 +200,32 @@ async def update_s3_processed(
     s3_content_key: str,
     s3_metadata_key: str,
     s3_imgs_key: str,
+    version: Version,
+    filename: str,
 ) -> None:
     """Upload the processed document (Markdown, metadata, images) to S3.
 
     Must be called within the versioned Redis lock, not as a background task.
     """
+    start = time.perf_counter()
     await s3_put_content(s3_content_key, processed_document.page_content)
-    # metadata and images are optional
+    logger.info(
+        f"CACHE [{version.value}] | WRITE content.md | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+    )
+
     if processed_document.metadata:
+        start = time.perf_counter()
         await s3_put_pydantic(s3_metadata_key, processed_document.metadata)
+        logger.debug(
+            f"CACHE [{version.value}] | WRITE metadata.json | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+        )
+
     if processed_document.images:
+        start = time.perf_counter()
         await s3_put_imgs(s3_imgs_key, processed_document.images)
+        logger.info(
+            f"CACHE [{version.value}] | WRITE images ({len(processed_document.images)}) | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +412,8 @@ async def _resolve_document(
         else:
             try:
                 await update_s3_processed(
-                    processed_document, s3_content_key, s3_metadata_key, s3_imgs_key
+                    processed_document, s3_content_key, s3_metadata_key, s3_imgs_key,
+                    version, filename,
                 )
             except Exception as e:
                 logger.warning(
@@ -498,24 +514,24 @@ async def resolve_request(
             lock_name=lock_name,
             force_reprocess=force_reprocess,
         )
-    except redis.exceptions.LockError:
+    except redis.exceptions.LockError as e:
         duration = (time.perf_counter() - start_time) * 1000
         logger.error(
             f"LOCK [{version.value}]{label} | TIMEOUT | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms"
         )
-        raise HTTPException(
-            status_code=504,
-            detail=f"[{version.value}] Lock timeout while processing '{filename}'. The file may already be queued — retry shortly.",
-        )
+        detail = f"[{version.value}] Lock timeout while processing '{filename}'. The file may already be queued — retry shortly."
+        if settings.verbose_errors and str(e):
+            detail += f"\nRedis error: {e}"
+        raise HTTPException(status_code=504, detail=detail)
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
         logger.error(
             f"PROC [{version.value}]{label} | UPSTREAM FAIL | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms | Error: {e}"
         )
-        raise HTTPException(
-            status_code=502,
-            detail=f"[{version.value}] Upstream processing failed for '{filename}': {str(e)}",
-        )
+        detail = f"[{version.value}] Upstream processing failed for '{filename}': {str(e)}"
+        if settings.verbose_errors and isinstance(e, httpx.HTTPStatusError):
+            detail += f"\nUpstream response body: {e.response.text}"
+        raise HTTPException(status_code=502, detail=detail)
 
     return processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time
 

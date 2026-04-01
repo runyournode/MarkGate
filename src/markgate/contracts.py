@@ -54,7 +54,7 @@ def resolve_env_placeholders(value: Any) -> Any:
                 )
             return resolved
 
-        return re.sub(r"\$\{([^}]+)\}", _replace, value)
+        return re.sub(r"\$\{([^}]+)}", _replace, value)
     if isinstance(value, dict):
         return {k: resolve_env_placeholders(v) for k, v in value.items()}
     if isinstance(value, list):

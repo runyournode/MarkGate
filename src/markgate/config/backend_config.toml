@@ -39,7 +39,7 @@ Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 description = "Foil-serve with Ministral-3-3B image description"
 backend_type = "foil"
 cache_id = "foil-ministral-3-3b"
-upstream_url = "http://localhost:8081"
+upstream_url = "http://localhost:8081/v1/process"
 authorized_api_key = "${CLIENT_API_KEY_FOIL_MINISTRAL_3_3B}"
 
 [backends.foil-ministral-3-3b.custom_headers]
@@ -59,7 +59,7 @@ image_description_model_name = "ministral-3-3b"
 description = "Foil-serve with Qwen-3.5-27B (no think)"
 backend_type = "foil"
 cache_id = "foil-qwen3.5-27b"
-upstream_url = "http://localhost:8081"
+upstream_url = "http://localhost:8081/v1/process"
 authorized_api_key = "${CLIENT_API_KEY_FOIL_QWEN_3.5_27B}"
 
 [backends."foil-qwen-3.5-27b".custom_headers]

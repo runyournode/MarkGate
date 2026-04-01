@@ -19,13 +19,11 @@ log_backup_count = 5
 # ---------------------------------------------------------------------------
 verbose_errors = false   # true = forward dependency error details to client (dev only)
 
-
 # ---------------------------------------------------------------------------
 # S3 Cache Storage
 # ---------------------------------------------------------------------------
 s3_cache_enabled = true
 s3_endpoint = "http://garage:3900"
-#s3_endpoint = "http://localhost:3900"
 s3_bucket = "markgate-cache"
 s3_region = "garage"
 # s3_access_key and s3_secret_key go in .env_secret
