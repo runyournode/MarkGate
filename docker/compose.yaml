@@ -3,7 +3,7 @@ name: markgate
 services:
   markgate_app:
 #    image: ghcr.io/runyournode/markgate:0.1.0 # not in conf anymore
-    image: ghcr.io/runyournode/markgate:sha-7d83170
+    image: ghcr.io/runyournode/markgate:sha-1808f47
     container_name: markgate_app
     extra_hosts:
       - "garage:host-gateway"
@@ -30,8 +30,8 @@ services:
     container_name: markgate_valkey
     expose:
       - "6379"
-    ports:  # dev only
-      - "6379:6379"
+#    ports:  # dev only
+#      - "6379:6379"
     volumes:
       - redis_data:/data
     command: "valkey-server --save 60 1"

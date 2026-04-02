@@ -17,7 +17,7 @@ log_backup_count = 5
 # ---------------------------------------------------------------------------
 # Error Reporting
 # ---------------------------------------------------------------------------
-verbose_errors = false   # true = forward dependency error details to client (dev only)
+verbose_errors = true   # true = forward dependency error details to client (dev only)
 
 # ---------------------------------------------------------------------------
 # S3 Cache Storage
