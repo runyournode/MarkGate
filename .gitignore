@@ -10,7 +10,7 @@ src/markgate/__pycache__/
 .ruff_cache
 
 # Environment variables
-#.env.secret  # uncomment in prod
+**/.env.secret
 
 # docker runtime volumes — ignore all content but keep directory structure (.gitkeep)
 docker/mounts_runtime/**
