@@ -22,7 +22,7 @@ verbose_errors = true   # true = forward dependency error details to client (dev
 # ---------------------------------------------------------------------------
 # S3 Cache Storage
 # ---------------------------------------------------------------------------
-s3_cache_enabled = true
+s3_cache_enabled = true   # false = disable caching entirely (always call upstream)
 s3_endpoint = "http://garage:3900"
 s3_bucket = "markgate-cache"
 s3_region = "garage"

@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     failed_requests_local_dir: str | None = "/tmp/markgate_failed"
 
     # Cache
-    s3_cache_enabled: bool = False
+    s3_cache_enabled: bool = True
 
     # Error reporting
     verbose_errors: bool = False
