@@ -11,6 +11,7 @@ from fastapi_offline import FastAPIOffline
 
 import alias_routes
 import api
+import auto_routes
 from config.settings import setup_logging
 from storage import lifespan
 
@@ -31,6 +32,14 @@ app: FastAPI = FastAPIOffline(
 
 app.mount("/statics", StaticFiles(directory=api.STATICS_DIR), name="statics")
 
+# auto_routes must be included before api.router: /md/auto/process etc. are literal paths that
+# would otherwise be shadowed by api.router's /md/{version}/process — Starlette matches routes by
+# path shape in registration order and doesn't fall through to a later route once one has matched,
+# so "auto" would be rejected as an invalid Version instead of ever reaching auto_routes' route.
+# See auto_routes.py's module docstring. build_router() returns None when AUTO_ROUTE_ENABLED is
+# false, in which case the routes simply don't exist.
+if auto_router := auto_routes.build_router():
+    app.include_router(auto_router)
 app.include_router(api.router)
 app.include_router(alias_routes.build_router())
 

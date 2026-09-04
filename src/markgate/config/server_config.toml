@@ -54,3 +54,11 @@ failed_requests_local_dir = "/tmp/markgate_failed"
 # Config Paths
 # ---------------------------------------------------------------------------
 backend_config_path = "config/backend_config.toml"
+
+# ---------------------------------------------------------------------------
+# Auto backend selection (optional — see README's "Auto backend selection")
+# ---------------------------------------------------------------------------
+auto_route_enabled = true   # true = register /md/auto/process, /auto/process, /auto/process/download
+auto_selector_path = "config/auto_selector_demo.py"   # required (and loaded, fail-fast) when auto_route_enabled = true — relative to CWD (src/markgate/ for local dev), like backend_config_path above
+max_upload_size_bytes = 104857600   # 100 MB — reject larger uploads with 413 before running any auto-selection logic; unset = no limit
+# CLIENT_API_KEY_AUTO (bearer token for /auto/*, independent of any backend's own key) goes in .env_secret, not here

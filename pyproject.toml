@@ -35,6 +35,11 @@ dev = [
     "tombi==0.9.11",
     "pytest>=8.0.0",
 ]
+# Extra dependencies for a custom AUTO_SELECTOR_PATH module (e.g. a PDF-parsing library for a
+# page-count-based routing policy — see src/markgate/routing.py). Empty for the shipped demo
+# selector, which needs nothing extra. Add whatever your own selector imports here, and
+# `uv sync --group auto-routing` (or bake it into the image) wherever AUTO_ROUTE_ENABLED=true.
+auto-routing = []
 
 [tool.ty.environment]
 extra-paths = ["src/markgate"]

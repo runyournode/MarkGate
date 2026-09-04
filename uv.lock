@@ -510,6 +510,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+auto-routing = []
 dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "ruff", specifier = "==0.15.6" },

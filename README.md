@@ -44,6 +44,10 @@ Adding a new instance of an existing engine requires editing `backend_config.tom
 | `PUT /{backend}/process` | yes (base64) | `{ "page_content": "...", "images": { "name": "b64..." }, "metadata": { ... } }` |
 | `PUT /{backend}/process/download` | yes (files) | tar.zst archive (content.md + images + metadata.json) |
 
+**Optional** — only present when auto backend selection is enabled (see below): `PUT
+/md/auto/process`, `PUT /auto/process`, `PUT /auto/process/download`. Same request/response shapes
+as the three routes above, but `{backend}` is picked automatically instead of named in the URL.
+
 - **Body**: raw file bytes (`application/octet-stream`)
 - **Headers**:
   - `Authorization: Bearer <authorized_api_key>` — key specific to the backend (see `backend_config.toml`)
@@ -102,6 +106,61 @@ than from the Version name (see `ProcessingConfig.cache_key()` / `FoilConfig.cac
 `contracts.py` / `backends/foil.py`). Alias declarations are validated at startup — the app
 refuses to start if an alias's `query_params` don't validate, or if two aliases on the same
 backend share a `name`.
+
+### Auto backend selection (optional)
+
+Instead of naming a backend in the URL, `PUT /md/auto/process` (and its `/auto/process` /
+`/auto/process/download` counterparts) let MarkGate pick one itself, based on properties of the
+uploaded file (extension, size, …). **Off by default** — the routes don't exist at all unless
+explicitly enabled — and the decision logic lives in a Python file you supply, outside MarkGate's
+own code, so it can be changed without touching or redeploying the app.
+
+Enable it with:
+
+| Variable / key         | Default | Description                                                              |
+|-------------------------|---------|---------------------------------------------------------------------------|
+| `auto_route_enabled`    | `false` | Registers the 3 `/auto/*` routes when `true`.                            |
+| `auto_selector_path`    | —       | Filesystem path to the `.py` file implementing `select()` (below).       |
+| `client_api_key_auto`   | —       | Bearer token for `/auto/*`. Independent of any backend's own key, since the backend isn't known until after the file is inspected. Empty = always rejected. |
+| `max_upload_size_bytes` | none    | Reject uploads over this size with `413` *before* running any selection logic. |
+
+The selector file must define a module-level function:
+
+```python
+async def select(ctx: BackendSelectionContext) -> BackendSelection: ...
+```
+
+`BackendSelectionContext` (input) carries `file_content`, `filename`, `extension`,
+`declared_content_type`, `sniffed_mime`, `size_bytes`, and `available_versions` (the live
+`VERSION_CONFIGS`, so the file can reference real backend names and introspect what's actually
+declared). `BackendSelection` (output) carries a `version` and optional `overrides` — the same
+`overrides` mechanism the query-param overrides and static aliases above already use — so a
+selector can pick a different backend outright, or tweak an existing one's params, but never
+fabricate an ad-hoc config. Raise `NoSuitableBackendError` for a file that legitimately can't be
+routed (→ `422`); any other exception propagates as a `500` (fail fast, not swallowed).
+
+A working example ships at `src/markgate/config/auto_selector_demo.py`:
+
+```python
+async def select(ctx: BackendSelectionContext) -> BackendSelection:
+    if ctx.size_bytes < 10 * 1024 * 1024:
+        return BackendSelection(version=Version("foil-ministral-3-3b"))
+    return BackendSelection(
+        version=Version("foil"),
+        overrides=SpreadsheetOverrides(spreadsheet_mode=SpreadsheetMode.AUTO, excel_min_output_ratio=0.99),
+    )
+```
+
+If a custom selector needs its own dependencies (e.g. a PDF-parsing library for a page-count-based
+policy), add them to the `auto-routing` dependency group in `pyproject.toml` rather than MarkGate's
+core dependencies — that group is empty by default.
+
+**Cache/lock coherence**: selection is a pure, local, in-memory decision that runs before any
+Redis/S3/upstream-backend activity — resolving a `Version` (+ optional overrides) hands off to the
+exact same cache/lock pipeline the explicit routes use. Two requests that resolve to the same
+`(Version, overrides)` pair for the same file content always share the same S3 cache entry and
+Redis lock, whether they came in via `/auto/*`, an explicit route, a query-param override, or a
+static alias — auto-selection never causes duplicate upstream processing.
 
 ### Health endpoints
 
@@ -251,8 +310,10 @@ converge on one cache entry.
 | `schemas.py`             | Pydantic v2 models: request headers, `ProcessedDocument` (internal, PIL images), `ProcessedDocumentOut` (public, base64 images), `ResponseDocument`, `Metadata` |
 | `services.py`            | Core logic: hash + MIME detection, cache resolution, upstream call, S3 writes, header merging        |
 | `storage.py`             | `S3Manager` + `RedisManager` lifecycle, all S3 I/O helpers, `lifespan` context manager               |
-| `security.py`            | `verify_api_key()` FastAPI dependency, `make_alias_api_key_verifier()` for route alias routes         |
+| `security.py`            | `verify_api_key()` FastAPI dependency, `make_alias_api_key_verifier()` for route alias routes, `verify_api_key_auto()` for `/auto/*` |
 | `media.py`               | PIL serialization, base64 helpers, libmagic MIME detection, `mime_to_ext()`, tar.zst builder         |
+| `routing.py`             | Optional auto backend selection: `BackendSelectionContext`/`BackendSelection` contract, `load_selector()` |
+| `auto_routes.py`         | Optional `/auto/*` routes — built only when `auto_route_enabled` is true (see `routing.py`)          |
 
 ### Key design decisions
 

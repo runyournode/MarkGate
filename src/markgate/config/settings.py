@@ -73,6 +73,27 @@ class Settings(BaseSettings):
     backend_config_path: str = "backend_config.toml"
     """Path to backend_config.toml. Relative to CWD or absolute."""
 
+    # Auto backend selection (optional — see auto_routes.py / routing.py)
+    auto_route_enabled: bool = False
+    """Registers /auto/process, /md/auto/process and /auto/process/download when true. Off by
+    default — the feature and its routes don't exist at all unless explicitly turned on."""
+
+    auto_selector_path: str | None = None
+    """Filesystem path to the .py file implementing `select(ctx) -> BackendSelection`. Required
+    (and loaded, fail-fast, at startup) when auto_route_enabled is true."""
+
+    client_api_key_auto: str = ""  # Secret — set in .env_secret
+    """Bearer token for /auto/* routes. Independent of any single backend's authorized_api_key,
+    since the backend isn't known until after the file has been inspected. Empty = /auto/* routes
+    always reject (fail closed)."""
+
+    max_upload_size_bytes: int | None = None
+    """Reject uploads over this size with 413 before running any auto-selection logic. None = no
+    limit. Currently enforced only on /auto/* — the natural place for it, since it exists
+    specifically to stop a selector from doing work on an oversized file before a backend is even
+    chosen; extending the same check to the explicit /{version}/process routes is a straightforward,
+    separate follow-up."""
+
     model_config = SettingsConfigDict(
         env_file=_CONFIG_DIR / ".env.secret",
         env_file_encoding="utf-8",
