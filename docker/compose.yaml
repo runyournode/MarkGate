@@ -30,8 +30,8 @@ services:
     container_name: markgate_valkey
     expose:
       - "6379"
-#    ports:  # dev only
-#      - "6379:6379"
+    ports:  # dev only
+      - "6379:6379"
     volumes:
       - redis_data:/data
     command: "valkey-server --save 60 1"

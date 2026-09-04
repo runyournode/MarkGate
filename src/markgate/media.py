@@ -71,6 +71,16 @@ def batch_b64_to_pil(images_b64: dict[str, str]) -> dict[str, Image.Image]:
     return {name: base64_to_pil(b64) for name, b64 in images_b64.items()}
 
 
+def bytes_to_pil(data: bytes) -> Image.Image:
+    """Decode raw image bytes (e.g. read back from S3) to a PIL Image."""
+    return Image.open(BytesIO(data))
+
+
+def batch_bytes_to_pil(images: dict[str, bytes]) -> dict[str, Image.Image]:
+    """Decode a dict of raw image bytes to PIL images."""
+    return {name: bytes_to_pil(data) for name, data in images.items()}
+
+
 def get_mime_type(content: bytes) -> str:
     """Detect the MIME type of raw bytes using libmagic."""
     return magic.Magic(mime=True).from_buffer(content)

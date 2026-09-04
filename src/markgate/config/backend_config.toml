@@ -14,6 +14,18 @@
 # cache_id: optional stable S3 cache key. When renaming a backend entry,
 #   set cache_id to the old name to preserve existing cached results.
 #   Example: renaming "docling-v2" to "docling" → set cache_id = "docling-v2"
+#
+# aliases: static route aliases for clients that can't set query params — each
+#   [[backends.X.aliases]] entry exposes a preset of per-request overrides under /alias/..., with
+#   the alias name inserted between the version and `process` so the path still ends in
+#   /process(/download):
+#     PUT /alias/md/foil/spreadsheet_ocr/process        == PUT /md/foil/process?spreadsheet_mode=ocr
+#     PUT /alias/foil/spreadsheet_ocr/process            == PUT /foil/process?spreadsheet_mode=ocr
+#     PUT /alias/foil/spreadsheet_ocr/process/download   == PUT /foil/process/download?spreadsheet_mode=ocr
+#   Both routes resolve to the exact same upstream call, so they share one cache entry and one
+#   processing lock (see FoilConfig.cache_key() in backends/foil.py). Only backends whose
+#   ProcessingConfig subclass supports per-request overrides can declare aliases — today, "foil"
+#   only, via SpreadsheetOverrides (spreadsheet_mode / excel_min_output_ratio).
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +42,18 @@ authorized_api_key = "${CLIENT_API_KEY_FOIL}"
 [backends.foil.custom_headers]
 Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 
+# Aliases with set query param
+[[backends.foil.aliases]]
+name = "spreadsheet_pandas"
+query_params = { spreadsheet_mode = "pandas" }
+
+[[backends.foil.aliases]]
+name = "spreadsheet_ocr"
+query_params = { spreadsheet_mode = "ocr" }
+
+[[backends.foil.aliases]]
+name = "spreadsheet_both"
+query_params = { spreadsheet_mode = "both" }
 
 # ---------------------------------------------------------------------------
 # Foil — with Ministral-3B VLM image description
@@ -48,6 +72,19 @@ Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 [backends.foil-ministral-3-3b.query_params]
 image_description_model_name = "ministral-3-3b"
 
+
+# Aliases with set query param
+[[backends.foil-ministral-3-3b.aliases]]
+name = "spreadsheet_pandas"
+query_params = { spreadsheet_mode = "pandas" }
+
+[[backends.foil-ministral-3-3b.aliases]]
+name = "spreadsheet_ocr"
+query_params = { spreadsheet_mode = "ocr" }
+
+[[backends.foil-ministral-3-3b.aliases]]
+name = "spreadsheet_both"
+query_params = { spreadsheet_mode = "both" }
 
 # BELOW IS UNTESTED - DEV IN PROGRESS
 

@@ -14,6 +14,10 @@
 # cache_id: optional stable S3 cache key. When renaming a backend entry,
 #   set cache_id to the old name to preserve existing cached results.
 #   Example: renaming "docling-v2" to "docling" → set cache_id = "docling-v2"
+#   Only used by backends whose ProcessingConfig doesn't override cache_key() (e.g. docling).
+#   "foil" derives its cache key from the resolved query params instead (see FoilConfig.cache_key()
+#   in backends/foil.py), so cache_id is a no-op there — renaming a foil Version never invalidates
+#   its cache regardless of cache_id.
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +51,29 @@ Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
 
 [backends.foil-ministral-3-3b.query_params]
 image_description_model_name = "ministral-3-3b"
+
+
+# ---------------------------------------------------------------------------
+# Foil — spreadsheets always forced through PDF+OCR
+# ---------------------------------------------------------------------------
+#
+# A preset alternative to passing ?spreadsheet_mode=ocr on PUT /md/foil/process (or /foil/process,
+# /foil/process/download). Both routes resolve to the exact same upstream call for the same file,
+# so a request via this Version and the equivalent query-param request on `foil` share one cache
+# entry and one processing lock — see FoilConfig.cache_key() in backends/foil.py. Only meaningful
+# for .xls/.xlsx/.ods inputs; a no-op for every other file type.
+
+[backends.foil-spreadsheet-ocr]
+description = "Foil-serve — spreadsheets forced through PDF+OCR, no image description"
+backend_type = "foil"
+upstream_url = "http://foil-serve:8081/v1/process"
+authorized_api_key = "${CLIENT_API_KEY_FOIL}"
+
+[backends.foil-spreadsheet-ocr.custom_headers]
+Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"
+
+[backends.foil-spreadsheet-ocr.query_params]
+spreadsheet_mode = "ocr"
 
 
 # BELOW IS UNTESTED - DEV IN PROGRESS

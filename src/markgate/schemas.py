@@ -134,6 +134,22 @@ class ProcessedDocument(ResponseDocument):
         return result
 
 
+class ProcessedDocumentOut(ResponseDocument):
+    """Public, JSON-schema-safe counterpart of ProcessedDocument, for routes that include images.
+
+    ProcessedDocument can't be used directly as a FastAPI response_model: its `images` field holds
+    PIL.Image.Image objects (arbitrary_types_allowed=True), and pydantic cannot generate a JSON
+    Schema for that type — FastAPI would fail to build /openapi.json. Build this from a
+    ProcessedDocument via `ProcessedDocumentOut(**doc.model_dump(mode="json"))`, which reuses its
+    `serialize_images` field_serializer (base64, original format) — a serializer runs fine even
+    though its output type can't be described as a schema.
+    """
+
+    images: dict[str, str] = Field(default_factory=dict)
+    """Images as base64-encoded strings, keyed by filename — same encoding as Foil-Serve's own
+    /v1/process response."""
+
+
 class FailedRequestInfo(BaseModel):
     """Saved to S3 under failed_requests/ when an upstream call fails."""
 

@@ -34,32 +34,74 @@ Backends are declared in `backend_config.toml` — the list below reflects the d
 
 Adding a new instance of an existing engine requires editing `backend_config.toml`. Adding a new engine type requires Python code (see developer section below).
 
-### Endpoint
-
-```
-PUT /md/{backend}/process
-```
+### Endpoints
 
 `{backend}` is the backend name as declared in `backend_config.toml` (e.g. `foil`, `docling`).
+
+| Route | Images | Response |
+|---|---|---|
+| `PUT /md/{backend}/process` | no | `{ "page_content": "...", "metadata": { ... } }` |
+| `PUT /{backend}/process` | yes (base64) | `{ "page_content": "...", "images": { "name": "b64..." }, "metadata": { ... } }` |
+| `PUT /{backend}/process/download` | yes (files) | tar.zst archive (content.md + images + metadata.json) |
 
 - **Body**: raw file bytes (`application/octet-stream`)
 - **Headers**:
   - `Authorization: Bearer <authorized_api_key>` — key specific to the backend (see `backend_config.toml`)
   - `Content-Type` — declared MIME type (the app always re-detects from bytes; this is informational only)
   - `X-Filename` — URL-encoded original filename (e.g. `my%20report.pdf`)
-- **Response**: `{ "page_content": "...", "metadata": { ... } }`
 
-A second endpoint returns a downloadable archive (content.md + images + metadata):
-
-```
-PUT /md/{backend}/process/download   →   tar.zst archive
-```
-
-Force re-processing (bypass cache):
+Force re-processing (bypass cache), on any of the three routes:
 
 ```
 PUT /md/{backend}/process?force_reprocess=true
 ```
+
+#### Per-request overrides (`foil` backends only)
+
+Foil-backed Versions also accept two optional query params, forwarded to Foil-Serve, on all three
+routes above:
+
+| Param | Values | Effect |
+|---|---|---|
+| `spreadsheet_mode` | `auto` (default) / `pandas` / `ocr` / `both` | Spreadsheet conversion strategy. No-op for non-spreadsheet files. |
+| `excel_min_output_ratio` | float ≥ 0 | Overrides the sparse-output threshold that triggers PDF+OCR fallback in `auto` mode. No-op outside `auto` mode. |
+
+```
+PUT /md/foil/process?spreadsheet_mode=ocr
+```
+
+#### Static route aliases
+
+Some clients can't set query params at all. Any `foil`-backed entry in `backend_config.toml` can
+declare static route aliases — each one pins a preset of the overrides above and exposes it under
+`/alias/...`, with the alias name inserted between the backend name and `process` so every route
+still ends in `/process` (or `/process/download`):
+
+```toml
+[backends.foil]
+...
+
+[[backends.foil.aliases]]
+name = "spreadsheet_ocr"
+query_params = { spreadsheet_mode = "ocr" }
+```
+
+exposes, in addition to the three routes above:
+
+| Route |
+|---|
+| `PUT /alias/md/foil/spreadsheet_ocr/process` |
+| `PUT /alias/foil/spreadsheet_ocr/process` |
+| `PUT /alias/foil/spreadsheet_ocr/process/download` |
+
+each identical to calling `foil` with `?spreadsheet_mode=ocr` — same upstream call, same API key.
+**An alias route and the equivalent query-param call share the same S3 cache entry and the same
+processing lock** — there's no manual mapping to keep in sync: both resolve to the exact same
+params sent to Foil-Serve, and the cache/lock key is derived from those resolved params rather
+than from the Version name (see `ProcessingConfig.cache_key()` / `FoilConfig.cache_key()` in
+`contracts.py` / `backends/foil.py`). Alias declarations are validated at startup — the app
+refuses to start if an alias's `query_params` don't validate, or if two aliases on the same
+backend share a `name`.
 
 ### Health endpoints
 
@@ -165,13 +207,15 @@ Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"  # MarkGate → backend
 
 ```
 Client (e.g., Open WebUI)
-        │  PUT /md/{backend}/process
+        │  PUT /md/{backend}/process  (or /{backend}/process[/download])
         ▼
    [ MarkGate ]
         │
         ├── verify_api_key()                    — check client Bearer token for this backend
+        ├── config.with_overrides(overrides)    — apply per-request query-param overrides, if any
         ├── compute_hash() + get_mime_type()    — parallel, from raw bytes
-        ├── Redis lock (hash + backend)         — prevent concurrent duplicate processing
+        ├── config.cache_key(version, mime)     — resolved-params signature (see below)
+        ├── Redis lock (hash + signature)       — prevent concurrent duplicate processing
         │
         ├── S3 cache hit?  ──yes──►  return cached content.md
         │
@@ -186,23 +230,28 @@ Client (e.g., Open WebUI)
                         background_update_s3() — write source file, _aliases, _metadata
 ```
 
+`config.cache_key(version, mime)` — default: the Version's `cache_id` (or its name), same as today.
+`FoilConfig` overrides it to key on the *resolved* query params instead, so a preset Version, a
+route alias, and an equivalent per-request override (see "Per-request overrides" above) all
+converge on one cache entry.
+
 ### Module responsibilities
 
 | Module                   | Role                                                                                                  |
 |--------------------------|-------------------------------------------------------------------------------------------------------|
 | `main.py`                | FastAPI app, route handlers, lifespan wiring                                                          |
 | `config/settings.py`     | `Settings` (pydantic-settings) — infrastructure env vars (S3, Redis, logging, paths)                 |
-| `config/loader.py`       | Builds the dynamic `Version` enum and `VERSION_CONFIGS` from `backend_config.toml` at startup        |
-| `contracts.py`           | `ProcessingConfig` base class, `resolve_env_placeholders()` — shared between `config/` and `backends/` |
+| `config/loader.py`       | Builds the dynamic `Version` enum, `VERSION_CONFIGS`, and resolves/validates route aliases (`ALIAS_ROUTES`) from `backend_config.toml` at startup |
+| `contracts.py`           | `ProcessingConfig` base class (`extra="forbid"`, `with_overrides()`, `cache_key()` extension points), `resolve_env_placeholders()` — shared between `config/` and `backends/` |
 | `backends/__init__.py`   | `BACKEND_HANDLERS` registry, `BackendConfig` root TOML schema, `AnyProcessingConfig` union           |
-| `backends/foil.py`       | Foil-serve handler + `FoilConfig`                                                                     |
+| `backends/foil.py`       | Foil-serve handler + `FoilConfig` + `FoilRouteAlias` (static route aliases)                          |
 | `backends/docling.py`    | Docling-serve handler + `DoclingConfig`                                                               |
 | `backends/marker.py`     | Marker handler stub                                                                                   |
 | `backends/chandra.py`    | Chandra handler stub                                                                                  |
-| `schemas.py`             | Pydantic v2 models: request headers, `ProcessedDocument`, `ResponseDocument`, `Metadata`             |
+| `schemas.py`             | Pydantic v2 models: request headers, `ProcessedDocument` (internal, PIL images), `ProcessedDocumentOut` (public, base64 images), `ResponseDocument`, `Metadata` |
 | `services.py`            | Core logic: hash + MIME detection, cache resolution, upstream call, S3 writes, header merging        |
 | `storage.py`             | `S3Manager` + `RedisManager` lifecycle, all S3 I/O helpers, `lifespan` context manager               |
-| `security.py`            | `verify_api_key()` FastAPI dependency                                                                 |
+| `security.py`            | `verify_api_key()` FastAPI dependency, `make_alias_api_key_verifier()` for route alias routes         |
 | `media.py`               | PIL serialization, base64 helpers, libmagic MIME detection, `mime_to_ext()`, tar.zst builder         |
 
 ### Key design decisions

@@ -1,6 +1,7 @@
 {
   "$defs": {
     "DoclingConfig": {
+      "additionalProperties": false,
       "properties": {
         "backend_type": {
           "const": "docling",
@@ -244,6 +245,7 @@
       "type": "object"
     },
     "FoilConfig": {
+      "additionalProperties": false,
       "properties": {
         "backend_type": {
           "const": "foil",
@@ -285,8 +287,17 @@
         "query_params": {
           "$ref": "#/$defs/FoilQueryParams",
           "default": {
-            "image_description_model_name": ""
+            "image_description_model_name": "",
+            "spreadsheet_mode": "auto",
+            "excel_min_output_ratio": null
           }
+        },
+        "aliases": {
+          "items": {
+            "$ref": "#/$defs/FoilRouteAlias"
+          },
+          "title": "Aliases",
+          "type": "array"
         }
       },
       "required": [
@@ -305,9 +316,47 @@
           "default": "",
           "title": "Image Description Model Name",
           "type": "string"
+        },
+        "spreadsheet_mode": {
+          "$ref": "#/$defs/SpreadsheetMode",
+          "default": "auto"
+        },
+        "excel_min_output_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excel Min Output Ratio"
         }
       },
       "title": "FoilQueryParams",
+      "type": "object"
+    },
+    "FoilRouteAlias": {
+      "additionalProperties": false,
+      "description": "A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment,\nfor clients that cannot set query params.\n\nRegistered as `/md/{version}/{name}/process`, `/{version}/{name}/process` and\n`/{version}/{name}/process/download` \u2014 `{name}` always sits between `{version}` and\n`process` so the path still ends in `/process`(`/download`). Each route resolves to the\nexact same FoilConfig (and therefore the exact same cache entry / processing lock, see\nFoilConfig.cache_key()) as calling the parent Version with the equivalent query params.",
+      "properties": {
+        "name": {
+          "description": "URL path segment, e.g. 'spreadsheet_ocr' for /{version}/spreadsheet_ocr/process.",
+          "minLength": 1,
+          "pattern": "^[a-z0-9_-]+$",
+          "title": "Name",
+          "type": "string"
+        },
+        "query_params": {
+          "$ref": "#/$defs/SpreadsheetOverrides"
+        }
+      },
+      "required": [
+        "name",
+        "query_params"
+      ],
+      "title": "FoilRouteAlias",
       "type": "object"
     },
     "PictureDescriptionApiConfig": {
@@ -352,6 +401,48 @@
         "url"
       ],
       "title": "PictureDescriptionApiConfig",
+      "type": "object"
+    },
+    "SpreadsheetMode": {
+      "description": "Mirrors foil_serve.schemas.SpreadsheetMode \u2014 the values foil-serve accepts.",
+      "enum": [
+        "auto",
+        "pandas",
+        "ocr",
+        "both"
+      ],
+      "title": "SpreadsheetMode",
+      "type": "string"
+    },
+    "SpreadsheetOverrides": {
+      "additionalProperties": false,
+      "description": "Per-request overrides for foil-backed Versions.\n\nA field left at None means \"no override \u2014 use this Version's configured value\" (whether that\nvalue comes from backend_config.toml or from the field's own default).\n\nextra=\"forbid\" doesn't affect the query-string path (as_query() below only ever constructs\nthis from its own declared Query() params) \u2014 it matters for FoilRouteAlias.query_params,\nwhere this model validates a TOML dict: a typo'd/unsupported key there must fail at startup,\nnot be silently dropped.",
+      "properties": {
+        "spreadsheet_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpreadsheetMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "excel_min_output_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excel Min Output Ratio"
+        }
+      },
+      "title": "SpreadsheetOverrides",
       "type": "object"
     }
   },
