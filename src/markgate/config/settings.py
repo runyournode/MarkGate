@@ -1,3 +1,5 @@
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -46,9 +48,15 @@ class Settings(BaseSettings):
     redis_socket_timeout: float = 5.0  # shouldn't be edited
 
     # Processing timeouts
-    redis_lock_timeout: int = 300  # Initial lock TTL (s). Auto-extended during upstream calls.
-    redis_blocking_timeout: int = 9999999  # Max wait on a locked hash before returning 504
-    upstream_timeout: float = 9999999  # Max wait for upstream backend (should ≈ REDIS_BLOCKING_TIMEOUT)
+    redis_lock_timeout: int = (
+        300  # Initial lock TTL (s). Auto-extended during upstream calls.
+    )
+    redis_blocking_timeout: int = (
+        9999999  # Max wait on a locked hash before returning 504
+    )
+    upstream_timeout: float = (
+        9999999  # Max wait for upstream backend (should ≈ REDIS_BLOCKING_TIMEOUT)
+    )
 
     # Failed request archiving
     failed_requests_s3_prefix: str = "failed_requests"
@@ -66,7 +74,7 @@ class Settings(BaseSettings):
     """Path to backend_config.toml. Relative to CWD or absolute."""
 
     model_config = SettingsConfigDict(
-        env_file=_CONFIG_DIR /".env.secret",
+        env_file=_CONFIG_DIR / ".env.secret",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -84,8 +92,35 @@ class Settings(BaseSettings):
             init_settings,
             env_settings,
             dotenv_settings,
-            TomlConfigSettingsSource(settings_cls, toml_file=_CONFIG_DIR / "server_config.toml"),
+            TomlConfigSettingsSource(
+                settings_cls, toml_file=_CONFIG_DIR / "server_config.toml"
+            ),
         )
 
 
 settings = Settings()
+
+
+def setup_logging() -> None:
+    """Configure the "markgate" logger's handlers/formatter from `settings`. Every module gets
+    its own `logging.getLogger("markgate")` — same name, same singleton logger instance — so
+    calling this once (from main.py, at app startup) is enough to route all of them. Mirrors
+    foil-serve's settings.py::setup_logging()."""
+    logger = logging.getLogger("markgate")
+    logger.setLevel(settings.log_level)
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    if settings.log_file:
+        file_handler = RotatingFileHandler(
+            settings.log_file,
+            maxBytes=settings.log_max_bytes,
+            backupCount=settings.log_backup_count,
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
