@@ -10,6 +10,7 @@
 # backend_type must match a registered handler in backends/BACKEND_HANDLERS:
 #   "foil"    — Foil-serve (raw bytes POST, optional VLM image description)
 #   "docling" — Docling-serve (multipart POST, rich OCR/layout options)
+#   "xberg"   — xberg (multipart POST to /extract; forces output_format="markdown")
 #
 # cache_id: optional stable S3 cache key. When renaming a backend entry,
 #   set cache_id to the old name to preserve existing cached results.
@@ -162,3 +163,32 @@ Authorization = "Bearer ${UPSTREAM_VLM_API_KEY}"
 [backends.docling-vl.query_params.picture_description_api.params]
 model = "ministral-3b"
 max_completion_tokens = 500
+
+
+# ---------------------------------------------------------------------------
+# xberg — native /extract endpoint, Markdown output forced
+# ---------------------------------------------------------------------------
+# Runs externally on the host (like foil-serve, not a docker compose service) — reached via the
+# xberg-serve host-gateway alias declared in compose.yaml's extra_hosts.
+
+[backends.xberg]
+backend_type = "xberg"
+description = "xberg — native /extract endpoint, markdown output"
+upstream_url = "http://xberg-serve:8083/extract"
+authorized_api_key = "${CLIENT_API_KEY_XBERG}"
+
+# No auth confirmed required by the current dev instance (OpenAPI securitySchemes: null) — omit
+# custom_headers for now. Uncomment if a deployment adds auth:
+# [backends.xberg.custom_headers]
+# Authorization = "Bearer ${UPSTREAM_XBERG_API_KEY}"
+
+# Light processing only: MarkGate wants raw/fast extraction, not xberg's full
+# document-understanding pipeline. disable_ocr alone guarantees no OCR regardless of ocr/
+# force_ocr (left unset). Other heavy features (chunking, structured_extraction, ner, redaction,
+# summarization, translation, page_classification, chunk_classification, captioning, qr_codes)
+# are opt-in add-ons in xberg — left unset, relying on xberg's own default of not running them.
+[backends.xberg.query_params]
+disable_ocr = true
+enable_quality_processing = false
+use_layout_for_markdown = false
+include_document_structure = false

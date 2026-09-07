@@ -3,6 +3,7 @@ import hashlib
 import logging
 import time
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path as FilePath
 from urllib.parse import quote, urlparse
 
@@ -12,7 +13,7 @@ from fastapi import BackgroundTasks, HTTPException
 from PIL import Image
 
 from backends import BACKEND_HANDLERS
-from config.loader import VERSION_CONFIGS, Version
+from config.loader import VERSION_CONFIGS
 from config.settings import settings
 from contracts import ProcessingConfig
 from schemas import Metadata
@@ -84,14 +85,9 @@ def build_s3_bg_keys(file_hash: str, signature: str, mime: str) -> tuple[str, st
     return source_key, alias_key, cache_meta_key
 
 
-# ---------------------------------------------------------------------------
-# S3 background update (source file, aliases, cache hit metadata)
-# ---------------------------------------------------------------------------
-
-
 async def background_update_s3(
     file_hash: str,
-    version: Version,
+    version: Enum,
     signature: str,
     filename: str,
     content: bytes,
@@ -199,7 +195,7 @@ async def update_s3_processed(
     s3_content_key: str,
     s3_metadata_key: str,
     s3_imgs_key: str,
-    version: Version,
+    version: Enum,
     filename: str,
 ) -> None:
     """Upload the processed document (Markdown, metadata, images) to S3.
@@ -227,16 +223,11 @@ async def update_s3_processed(
         )
 
 
-# ---------------------------------------------------------------------------
-# Failed request archiving
-# ---------------------------------------------------------------------------
-
-
 async def save_failed_request(
     file_content: bytes,
     filename: str,
     file_hash: str,
-    version: Version,
+    version: Enum,
     error_message: str,
     upstream_duration_ms: float,
 ) -> None:
@@ -293,16 +284,11 @@ async def save_failed_request(
         )
 
 
-# ---------------------------------------------------------------------------
-# Image retrieval (cache hit vs fresh upstream call)
-# ---------------------------------------------------------------------------
-
-
 async def gather_images(
     processed_document: ProcessedDocument,
     from_cache: bool,
     s3_imgs_key: str,
-    version: Version,
+    version: Enum,
     filename: str,
 ) -> dict[str, Image.Image]:
     """Return this document's images as PIL objects.
@@ -344,7 +330,7 @@ async def _keep_lock_alive(lock, interval: float) -> None:
 
 async def _resolve_document(
     config: ProcessingConfig,
-    version: Version,
+    version: Enum,
     file_hash: str,
     filename: str,
     file_content: bytes,
@@ -462,11 +448,6 @@ async def _resolve_document(
         return processed_document, False
 
 
-# ---------------------------------------------------------------------------
-# Upstream backend call
-# ---------------------------------------------------------------------------
-
-
 async def call_upstream_backend(
     config: ProcessingConfig,
     file_content: bytes,
@@ -477,7 +458,8 @@ async def call_upstream_backend(
 
     `config` must already reflect any per-request overrides (see ProcessingConfig.with_overrides).
     Routing is backend_type-based. Raises on unknown backend, non-2xx HTTP status, or empty
-    page_content.
+    page_content. Stamps `extraction_engine` (backend_type, e.g. "foil"/"xberg") onto the result's
+    metadata here, once, rather than in every backend module.
     """
     handler = BACKEND_HANDLERS.get(config.backend_type)
     if handler is None:
@@ -486,17 +468,15 @@ async def call_upstream_backend(
             f"Available: {list(BACKEND_HANDLERS)}"
         )
     async with httpx.AsyncClient(timeout=settings.upstream_timeout) as async_client:
-        return await handler(config, file_content, headers, filename, async_client)
-
-
-# ---------------------------------------------------------------------------
-# Shared request preamble (used by all process routes in main.py)
-# ---------------------------------------------------------------------------
+        result = await handler(config, file_content, headers, filename, async_client)
+    existing = result.metadata.root if result.metadata else {}
+    result.metadata = Metadata({**existing, "extraction_engine": config.backend_type})
+    return result
 
 
 async def resolve_request(
     headers_data: ExternalDocumentRequestHeaders,
-    version: Version,
+    version: Enum,
     config: ProcessingConfig,
     background_tasks: BackgroundTasks,
     api_key: str,
@@ -584,11 +564,6 @@ async def resolve_request(
         raise HTTPException(status_code=502, detail=detail)
 
     return processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time
-
-
-# ---------------------------------------------------------------------------
-# Health check helpers
-# ---------------------------------------------------------------------------
 
 
 async def check_backends_health() -> dict[str, tuple[str, str | None]]:

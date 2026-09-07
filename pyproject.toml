@@ -1,6 +1,6 @@
 [project]
 name = "markgate"
-version = "0.1.4"
+version = "0.1.5"
 description = "Proxy between open-webui and document to text conversion backends with versioned and persistant cache management."
 readme = "README.md"
 license = "Apache-2.0"

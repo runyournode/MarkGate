@@ -89,10 +89,8 @@ class Settings(BaseSettings):
 
     max_upload_size_bytes: int | None = None
     """Reject uploads over this size with 413 before running any auto-selection logic. None = no
-    limit. Currently enforced only on /auto/* — the natural place for it, since it exists
-    specifically to stop a selector from doing work on an oversized file before a backend is even
-    chosen; extending the same check to the explicit /{version}/process routes is a straightforward,
-    separate follow-up."""
+    limit. Enforced only on /auto/*, to stop a selector from doing work on an oversized file
+    before a backend is even chosen."""
 
     model_config = SettingsConfigDict(
         env_file=_CONFIG_DIR / ".env.secret",
@@ -107,7 +105,7 @@ class Settings(BaseSettings):
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
-        **_kwargs: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,

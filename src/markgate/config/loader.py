@@ -1,42 +1,29 @@
 """Runtime backend registry: loads backend_config.toml and exposes Version + VERSION_CONFIGS.
 
-## Why dynamic ?
-
-Backend versions are declared in backend_config.toml, not hardcoded in Python.
-Adding or renaming a backend only requires editing the TOML — no code change needed.
-
-To achieve this, `Version` is not a regular class: it is built at startup by Python's
-`Enum()` functional API from the list of backend names found in the TOML file.
+`Version` is built at startup by Python's `Enum()` functional API from the backend names found
+in the TOML file, so adding or renaming a backend only requires editing the TOML:
 
     [backends.foil]           →  Version.foil,           value == "foil"
     [backends.foil-ministral] →  Version.foil_ministral,  value == "foil-ministral"
 
-Hyphens and dots in TOML keys are replaced with underscores to produce valid Python
-identifiers. The original string (e.g. "foil-ministral") is preserved as the enum value
-and used in S3 cache paths, log lines, and API responses.
+Hyphens/dots become underscores for valid identifiers; the original string is kept as the enum
+value (used in S3 cache paths, log lines, API responses). `Version` is also `str` (`type=str`),
+so instances work directly wherever a string is expected (f-strings, dict keys, path params).
 
-`Version` instances are also `str` (declared with `type=str`), so they can be used
-directly wherever a string is expected (e.g. f-strings, dict keys, FastAPI path params).
+`BackendConfig` is imported inside `_load()`, not at module scope, since a top-level import of
+backends/ would trigger backends/__init__.py before config.settings is fully initialized on
+some import paths.
 
-## Why the local import ?
-
-`BackendConfig` is imported inside `_load()`, not at the top of the file.
-loader.py lives inside config/, and a top-level import of backends/ would trigger
-backends/__init__.py before config.settings is fully initialized on some import paths.
-The local import defers it until after all config submodules are ready.
-
-## What is exported ?
-
-- `Version`         : the dynamic Enum class — used as a FastAPI path parameter type.
-- `VERSION_CONFIGS` : maps each Version member to its ProcessingConfig (URL, keys, params…).
-- `ALIAS_ROUTES`    : static route aliases (see `backends.foil.FoilRouteAlias`) resolved and
-                       validated at import time, ready for main.py to register as routes.
+Exports: `Version` (the dynamic Enum class, used as a FastAPI path parameter type),
+`VERSION_CONFIGS` (Version → its ProcessingConfig), `ALIAS_ROUTES` (static route aliases, see
+`backends.foil.FoilRouteAlias`, resolved and validated here at import time for main.py to
+register).
 """
 
 import tomllib
 from enum import Enum
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from contracts import ProcessingConfig, resolve_env_placeholders  # noqa: F401
 from config.settings import settings
@@ -131,9 +118,15 @@ def _load() -> tuple[type[Enum], dict[Enum, ProcessingConfig], list[ResolvedAlia
     return _Version, _VERSION_CONFIGS, _ALIAS_ROUTES
 
 
-# Module-level annotations: static type checkers cannot infer these from Enum(),
-# so we declare them explicitly. The actual types are assigned by _load() below.
-Version: type[Enum]
-VERSION_CONFIGS: dict[Enum, ProcessingConfig]
-ALIAS_ROUTES: list[ResolvedAlias]
-Version, VERSION_CONFIGS, ALIAS_ROUTES = _load()
+if TYPE_CHECKING:
+    # Static shape only — the real members come from backend_config.toml at runtime (_load()
+    # below). This satisfies static type checkers (a variable of type `type[Enum]`, which is
+    # all a dynamically-built Enum() call statically infers to, is not valid in annotation
+    # position — `Version` must be an actual class for `version: Version` to type-check
+    # elsewhere). Never executed; TYPE_CHECKING is always False at runtime.
+    class Version(str, Enum): ...
+
+    VERSION_CONFIGS: dict[Enum, ProcessingConfig]
+    ALIAS_ROUTES: list[ResolvedAlias]
+else:
+    Version, VERSION_CONFIGS, ALIAS_ROUTES = _load()

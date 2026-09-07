@@ -1,24 +1,18 @@
 """Dynamically generated routes: one triple per backend_config.toml alias declaration (see
-backends.foil.FoilRouteAlias), built from ALIAS_ROUTES — resolved and validated at import time in
-config/loader.py. Kept separate from api.py's statically decorated routes: the number of routes
-here isn't known until backend_config.toml has been loaded, generated in a loop via
-add_api_route() rather than @router decorators, and each route needs its own closure over a
-per-alias (version, config) pair. Mixing this generator with api.py's fixed set of decorated
-routes would make both harder to read — see the module docstring in api.py.
+backends.foil.FoilRouteAlias), built from ALIAS_ROUTES. Kept separate from api.py's statically
+decorated routes since the number of routes here isn't known until backend_config.toml has been
+loaded — generated in a loop via add_api_route() instead of @router decorators.
 
-Each alias resolves to an already-merged ProcessingConfig, computed once at import time in
-config/loader.py's _resolve_aliases(), so these routes are functionally identical to their
-query-param equivalent on the parent Version, including sharing its cache entry / processing lock
-(see FoilConfig.cache_key()). `{alias.name}` always sits between `{version}` and `process` (not
-after) so every alias path still ends in /process or /process/download, and every alias route
-lives under a fixed `/alias` prefix so it's recognizable at a glance and can't collide with a real
-Version name.
+Each alias resolves to an already-merged ProcessingConfig (config/loader.py's
+_resolve_aliases()), so these routes share their parent Version's cache entry / processing lock
+(see FoilConfig.cache_key()) and live under a fixed `/alias` prefix so they can't collide with a
+real Version name.
 
-Each handler factory below binds `version`/`config`/`verify` as default-argument values (not free
-variables) specifically to avoid the classic Python closure-in-a-loop bug, where every closure
-would otherwise share the loop's final `alias`.
+Each handler factory below binds `version`/`config`/`verify` as default-argument values (not
+free variables) to avoid the classic Python closure-in-a-loop bug.
 """
 
+from enum import Enum
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -29,7 +23,7 @@ import responders
 from contracts import ProcessingConfig
 from schemas import ExternalDocumentRequestHeaders, ProcessedDocumentOut, ProxyOutput
 from security import make_alias_api_key_verifier
-from config.loader import ALIAS_ROUTES, Version
+from config.loader import ALIAS_ROUTES
 
 
 def _alias_equivalent_description(equivalent_path: str, overrides: Any) -> str:
@@ -67,7 +61,7 @@ def build_router() -> APIRouter:
         )
 
         def make_md_handler(
-            version: Version = alias.version,
+            version: Enum = alias.version,
             config: ProcessingConfig = alias.config,
             verify=verify,
         ):
@@ -95,7 +89,7 @@ def build_router() -> APIRouter:
             return handler
 
         def make_images_handler(
-            version: Version = alias.version,
+            version: Enum = alias.version,
             config: ProcessingConfig = alias.config,
             verify=verify,
         ):
@@ -123,7 +117,7 @@ def build_router() -> APIRouter:
             return handler
 
         def make_download_handler(
-            version: Version = alias.version,
+            version: Enum = alias.version,
             config: ProcessingConfig = alias.config,
             verify=verify,
         ):

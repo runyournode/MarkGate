@@ -87,7 +87,7 @@ class TestBackendSelectionContextAndSelection:
 
 class TestAutoSelectorDemo:
     """Exercises the shipped example against the real Version enum (see tests/conftest.py /
-    tests/fixtures/backend_config.toml, which declares the two names it references)."""
+    tests/fixtures/backend_config.toml, which declares the three names it references)."""
 
     def test_small_file_routes_to_ministral(self):
         import auto_selector_demo
@@ -98,12 +98,12 @@ class TestAutoSelectorDemo:
         assert selection.version == Version("foil-ministral-3-3b")
         assert selection.overrides is None
 
-    def test_large_file_routes_to_foil_with_spreadsheet_overrides(self):
+    def test_medium_file_routes_to_foil_with_spreadsheet_overrides(self):
         import auto_selector_demo
         from config.loader import VERSION_CONFIGS, Version
 
         ctx = make_ctx(
-            size_bytes=auto_selector_demo.SIZE_THRESHOLD_BYTES + 1,
+            size_bytes=auto_selector_demo.FOIL_VLM_THRESHOLD * 1024**2 + 1,
             available_versions=VERSION_CONFIGS,
         )
         selection = asyncio.run(auto_selector_demo.select(ctx))
@@ -112,17 +112,29 @@ class TestAutoSelectorDemo:
             spreadsheet_mode=SpreadsheetMode.AUTO, excel_min_output_ratio=0.99
         )
 
-    def test_boundary_at_exactly_threshold_routes_to_foil(self):
-        # size_bytes < THRESHOLD -> ministral; == THRESHOLD falls to the >= branch.
+    def test_boundary_at_exactly_vlm_threshold_routes_to_foil(self):
+        # size_bytes < FOIL_VLM_THRESHOLD -> ministral; == threshold falls to the >= branch.
         import auto_selector_demo
         from config.loader import VERSION_CONFIGS, Version
 
         ctx = make_ctx(
-            size_bytes=auto_selector_demo.SIZE_THRESHOLD_BYTES,
+            size_bytes=auto_selector_demo.FOIL_VLM_THRESHOLD * 1024**2,
             available_versions=VERSION_CONFIGS,
         )
         selection = asyncio.run(auto_selector_demo.select(ctx))
         assert selection.version == Version("foil")
+
+    def test_large_file_routes_to_xberg(self):
+        import auto_selector_demo
+        from config.loader import VERSION_CONFIGS, Version
+
+        ctx = make_ctx(
+            size_bytes=auto_selector_demo.XBERG_THRESHOLD * 1024**2,
+            available_versions=VERSION_CONFIGS,
+        )
+        selection = asyncio.run(auto_selector_demo.select(ctx))
+        assert selection.version == Version("xberg")
+        assert selection.overrides is None
 
 
 class TestAutoOverridesCacheConvergence:

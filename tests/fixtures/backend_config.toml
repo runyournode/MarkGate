@@ -1,8 +1,8 @@
 # Minimal backend_config.toml used only to make config.loader importable during tests (its
 # Version/VERSION_CONFIGS are built at module import time — see tests/conftest.py). Declares the
-# two names auto_selector_demo.py references so tests/test_routing.py can exercise it against the
-# real Version enum, same pattern test_route_aliases.py's FakeVersion avoids needing for its own
-# (config.loader-independent) tests.
+# three names auto_selector_demo.py references so tests/test_routing.py can exercise it against
+# the real Version enum, same pattern test_route_aliases.py's FakeVersion avoids needing for its
+# own (config.loader-independent) tests.
 
 [backends.foil]
 description = "test fixture — plain"
@@ -18,3 +18,9 @@ authorized_api_key = "test-key"
 
 [backends.foil-ministral-3-3b.query_params]
 image_description_model_name = "ministral-3-3b"
+
+[backends.xberg]
+description = "test fixture — xberg"
+backend_type = "xberg"
+upstream_url = "http://xberg-serve:8083/extract"
+authorized_api_key = "test-key"

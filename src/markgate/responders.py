@@ -12,6 +12,7 @@ decorators in api.py, dynamically generated routes in alias_routes.py) both need
 import time
 import asyncio
 import logging
+from enum import Enum
 from typing import NamedTuple
 
 from fastapi import BackgroundTasks, HTTPException
@@ -26,7 +27,6 @@ from schemas import (
     ResponseDocument,
 )
 from services import gather_images, resolve_request
-from config.loader import Version
 
 logger = logging.getLogger("markgate")
 
@@ -40,13 +40,17 @@ class ProcessResult(NamedTuple):
     from_cache: bool
     filename: str
     s3_imgs_key: str
-    version: Version
+    version: Enum
     start_time: float
 
 
 async def run(
     headers_data: ExternalDocumentRequestHeaders,
-    version: Version,
+    # Enum, not config.loader.Version: run() is called with a real Version from api.py's
+    # path-resolved routes, but also with the plain-Enum-typed values alias_routes.py /
+    # auto_routes.py carry (ResolvedAlias.version, BackendSelection.version) — see their
+    # comments. Version is itself an Enum subclass, so this accepts both.
+    version: Enum,
     background_tasks: BackgroundTasks,
     api_key: str,
     file_content: bytes,

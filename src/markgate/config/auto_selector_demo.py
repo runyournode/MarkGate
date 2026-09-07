@@ -7,11 +7,8 @@ Enable with:
 Demo policy — illustrative, tune thresholds and targets to your own backends before relying on
 this in production:
     - file <  10 MB -> "foil-ministral-3-3b" (VLM image description)
-    - file >= 10 MB -> "foil", spreadsheet_mode=auto, excel_min_output_ratio=0.99
-
-TEMPORARY LOCATION: this file lives under src/ for now. It belongs under
-docker/mounts_config/markgate/config/ long-term, alongside backend_config.toml (same bind-mount
-pattern) — move it there in the docker mounts pass.
+    - file <  15 MB -> "foil", spreadsheet_mode=auto, excel_min_output_ratio=0.99
+    - file >= 15 MB -> "xberg"
 
 Needs no extra dependency beyond what MarkGate already requires. A selector that does (e.g. a
 PDF-parsing library for a page-count-based policy) should declare it in pyproject.toml's
@@ -22,16 +19,22 @@ from backends.foil import SpreadsheetMode, SpreadsheetOverrides
 from config.loader import Version
 from routing import BackendSelection, BackendSelectionContext
 
-SIZE_THRESHOLD_BYTES = 10 * 1024 * 1024
+FOIL_VLM_THRESHOLD = 10  # MB
+XBERG_THRESHOLD = 15  # MB
 
 
 async def select(ctx: BackendSelectionContext) -> BackendSelection:
-    if ctx.size_bytes < SIZE_THRESHOLD_BYTES:
+    size_mb = ctx.size_bytes / 1024**2
+    if size_mb < FOIL_VLM_THRESHOLD:
         return BackendSelection(version=Version("foil-ministral-3-3b"))
-    return BackendSelection(
-        version=Version("foil"),
-        overrides=SpreadsheetOverrides(
-            spreadsheet_mode=SpreadsheetMode.AUTO,
-            excel_min_output_ratio=0.99,
-        ),
-    )
+    elif size_mb < XBERG_THRESHOLD:
+        return BackendSelection(
+            version=Version("foil"),
+            overrides=SpreadsheetOverrides(
+                spreadsheet_mode=SpreadsheetMode.AUTO,
+                excel_min_output_ratio=0.99,
+            ),
+        )
+    else:
+        return BackendSelection(version=Version("xberg"))
+

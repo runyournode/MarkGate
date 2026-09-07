@@ -1,4 +1,5 @@
 import logging
+from enum import Enum
 from typing import Callable, Coroutine
 
 from fastapi import Depends, HTTPException
@@ -12,12 +13,12 @@ logger = logging.getLogger("markgate")
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _check_bearer(version: Version, auth: HTTPAuthorizationCredentials | None) -> str:
+def _check_bearer(version: Enum, auth: HTTPAuthorizationCredentials | None) -> str:
     """Check that the client's Bearer token matches the expected key for this version.
 
     Shared by verify_api_key (base routes, `version` comes from the path param) and
     make_alias_api_key_verifier (alias routes, `version` is fixed at route-registration time —
-    there's no `{version}` path segment to read it from, see main.py's _register_alias_routes()).
+    there's no `{version}` path segment to read it from, see alias_routes.build_router()).
     """
     api_key = auth.credentials if auth else None
     expected_key = VERSION_CONFIGS[version].authorized_api_key
@@ -42,7 +43,9 @@ async def verify_api_key(
 
 
 def make_alias_api_key_verifier(
-    version: Version,
+    # Enum, not Version: called with ResolvedAlias.version (config/loader.py), which is
+    # deliberately typed against the plain Enum base — see its docstring.
+    version: Enum,
 ) -> Callable[..., Coroutine[None, None, str]]:
     """Build a Depends()-compatible verifier for a route alias, whose Version is fixed at
     registration time rather than read from a `{version}` path param. Same check, same expected

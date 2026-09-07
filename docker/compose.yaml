@@ -3,11 +3,12 @@ name: markgate
 services:
   markgate_app:
 #    image: ghcr.io/runyournode/markgate:0.1.0 # not in conf anymore
-    image: ghcr.io/runyournode/markgate:sha-1808f47
+    image: ghcr.io/runyournode/markgate:sha-daf0b19
     container_name: markgate_app
     extra_hosts:
       - "garage:host-gateway"
       - "foil-serve:host-gateway"
+      - "xberg-serve:host-gateway"
     ports:
       - "8080:8080"
     volumes:

@@ -45,15 +45,10 @@ class SpreadsheetMode(StrEnum):
 
 
 class SpreadsheetOverrides(BaseModel):
-    """Per-request overrides for foil-backed Versions.
-
-    A field left at None means "no override — use this Version's configured value" (whether that
-    value comes from backend_config.toml or from the field's own default).
-
-    extra="forbid" doesn't affect the query-string path (as_query() below only ever constructs
-    this from its own declared Query() params) — it matters for FoilRouteAlias.query_params,
-    where this model validates a TOML dict: a typo'd/unsupported key there must fail at startup,
-    not be silently dropped.
+    """Per-request overrides for foil-backed Versions. A field left at None means "no override —
+    use this Version's configured value". extra="forbid" mainly matters for
+    FoilRouteAlias.query_params, where this model validates a TOML dict and a typo'd/unsupported
+    key must fail at startup rather than be silently dropped.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -67,13 +62,17 @@ class SpreadsheetOverrides(BaseModel):
         spreadsheet_mode: SpreadsheetMode | None = Query(
             None,
             description="Override this Version's spreadsheet conversion strategy "
-            "(auto/pandas/ocr/both). Ignored for non-spreadsheet inputs.",
+            "(auto/pandas/ocr/both). Ignored for non-spreadsheet inputs. "
+            "**Only has an effect on backend_type=\"foil\" Versions** — accepted (no error) but "
+            "silently discarded, with no effect, on every other backend_type (docling, xberg, ...).",
         ),
         excel_min_output_ratio: float | None = Query(
             None,
             ge=0.0,
             description="Override the sparse-output threshold that triggers PDF+OCR fallback "
-            "in 'auto' mode. Ignored outside 'auto' mode and for non-spreadsheet inputs.",
+            "in 'auto' mode. Ignored outside 'auto' mode and for non-spreadsheet inputs. "
+            "**Only has an effect on backend_type=\"foil\" Versions** — accepted (no error) but "
+            "silently discarded, with no effect, on every other backend_type (docling, xberg, ...)."
         ),
     ) -> "SpreadsheetOverrides":
         return cls(
@@ -101,15 +100,11 @@ class FoilQueryParams(BaseModel):
 
 
 class FoilRouteAlias(BaseModel):
-    """A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment,
-    for clients that cannot set query params.
-
-    Registered under the fixed `/alias` prefix as `/alias/md/{version}/{name}/process`,
-    `/alias/{version}/{name}/process` and `/alias/{version}/{name}/process/download` — `{name}`
-    always sits between `{version}` and `process` so the path still ends in `/process`(`/download`).
-    Each route resolves to the exact same FoilConfig (and therefore the exact same cache entry /
-    processing lock, see FoilConfig.cache_key()) as calling the parent Version with the equivalent
-    query params.
+    """A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment, for
+    clients that cannot set query params. Registered as
+    `/alias/{md/}{version}/{name}/process{/download}`. Resolves to the exact same FoilConfig
+    (and cache entry / processing lock, see FoilConfig.cache_key()) as calling the parent
+    Version with the equivalent query params.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -146,11 +141,9 @@ class FoilConfig(ProcessingConfig):
         return self.model_copy(update={"query_params": merged})
 
     def get_raw_query_params(self, mime: str = "") -> dict[str, Any]:
-        """Resolve this config's query params for a file of the given MIME type.
-
-        Drops keys that are inert for `mime` so that (a) we don't send foil-serve params it will
-        ignore anyway and (b) `cache_key()` — built from this same dict — doesn't fragment the
-        cache over params that can't have changed the output.
+        """Resolve this config's query params for a file of the given MIME type, dropping keys
+        that are inert for `mime` (foil-serve would ignore them, and cache_key() — built from
+        this same dict — would otherwise fragment the cache over params that can't affect it).
         """
         raw = self.query_params.model_dump(exclude_none=True)
 
@@ -163,18 +156,14 @@ class FoilConfig(ProcessingConfig):
             raw.pop("excel_min_output_ratio", None)
 
         if not raw.get("image_description_model_name"):
-            # Passing an empty string here is not compatible with foil-serve — omit the key
-            # entirely rather than dropping the whole dict (as the previous implementation did).
+            # An empty string is not compatible with foil-serve — omit the key entirely.
             raw.pop("image_description_model_name", None)
 
         return raw
 
     def cache_key(self, version: str, mime: str) -> str:
-        """Human-readable cache/lock key derived from the resolved params, not the Version name.
-
-        Two FoilConfigs — a preset Version, or the base Version plus a per-request override —
-        that resolve to the same params dict produce the same key here, so they share one cache
-        entry / one processing lock, regardless of which Version or override produced them.
+        """Human-readable cache/lock key derived from the resolved params, not the Version name,
+        so a preset Version and an equivalent per-request override share one cache entry / lock.
         """
         params = self.get_raw_query_params(mime)
         if not params:

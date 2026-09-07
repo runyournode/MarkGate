@@ -13,9 +13,10 @@ from typing import Annotated, Protocol
 import httpx
 from pydantic import BaseModel, Field
 
-from backends import chandra, docling, foil, marker
+from backends import chandra, docling, foil, marker, xberg
 from backends.docling import DoclingConfig
 from backends.foil import FoilConfig
+from backends.xberg import XbergConfig
 from contracts import ProcessingConfig
 from schemas import ProcessedDocument
 
@@ -36,10 +37,11 @@ BACKEND_HANDLERS: dict[str, BackendHandler] = {
     "docling": docling.call,
     "marker": marker.call,
     "chandra": chandra.call,
+    "xberg": xberg.call,
 }
 
 AnyProcessingConfig = Annotated[
-    FoilConfig | DoclingConfig,
+    FoilConfig | DoclingConfig | XbergConfig,
     Field(discriminator="backend_type"),
 ]
 

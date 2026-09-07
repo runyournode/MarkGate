@@ -63,7 +63,10 @@ PUT /md/{backend}/process?force_reprocess=true
 #### Per-request overrides (`foil` backends only)
 
 Foil-backed Versions also accept two optional query params, forwarded to Foil-Serve, on all three
-routes above:
+routes above. FastAPI accepts these query params on every Version regardless of `backend_type`
+(they're declared once, unconditionally, on the process routes), but they only have an effect on
+`foil`-backed Versions — sent to a `docling`, `xberg`, or any other non-foil Version, they're
+**silently discarded**: no error, no effect, nothing forwarded upstream.
 
 | Param | Values | Effect |
 |---|---|---|
@@ -355,10 +358,12 @@ image_description_model_name = "my-model"
 Add the referenced env vars to `.env_secret` and restart — the new endpoint
 `PUT /md/foil-my-model/process` is live.
 
-Currently supported engines (valid `backend_type` values): `foil`, `docling`, `marker`, `chandra`.
+Currently supported engines (valid `backend_type` values): `foil`, `docling`, `marker`, `chandra`,
+`xberg`.
 
 > **Production readiness**: `foil` is battle-tested in production. `docling` is functional but
-> tested only in early stages. `marker` and `chandra` are stubs (not implemented).
+> tested only in early stages. `xberg` is new and untested in production. `marker` and `chandra`
+> are stubs (not implemented).
 
 ---
 

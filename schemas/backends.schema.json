@@ -339,10 +339,10 @@
     },
     "FoilRouteAlias": {
       "additionalProperties": false,
-      "description": "A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment,\nfor clients that cannot set query params.\n\nRegistered as `/md/{version}/{name}/process`, `/{version}/{name}/process` and\n`/{version}/{name}/process/download` \u2014 `{name}` always sits between `{version}` and\n`process` so the path still ends in `/process`(`/download`). Each route resolves to the\nexact same FoilConfig (and therefore the exact same cache entry / processing lock, see\nFoilConfig.cache_key()) as calling the parent Version with the equivalent query params.",
+      "description": "A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment,\nfor clients that cannot set query params.\n\nRegistered under the fixed `/alias` prefix as `/alias/md/{version}/{name}/process`,\n`/alias/{version}/{name}/process` and `/alias/{version}/{name}/process/download` \u2014 `{name}`\nalways sits between `{version}` and `process` so the path still ends in `/process`(`/download`).\nEach route resolves to the exact same FoilConfig (and therefore the exact same cache entry /\nprocessing lock, see FoilConfig.cache_key()) as calling the parent Version with the equivalent\nquery params.",
       "properties": {
         "name": {
-          "description": "URL path segment, e.g. 'spreadsheet_ocr' for /{version}/spreadsheet_ocr/process.",
+          "description": "URL path segment, e.g. 'spreadsheet_ocr' for /alias/{version}/spreadsheet_ocr/process.",
           "minLength": 1,
           "pattern": "^[a-z0-9_-]+$",
           "title": "Name",
@@ -444,6 +444,221 @@
       },
       "title": "SpreadsheetOverrides",
       "type": "object"
+    },
+    "XbergConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backend_type": {
+          "const": "xberg",
+          "title": "Backend Type",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "upstream_url": {
+          "title": "Upstream Url",
+          "type": "string"
+        },
+        "authorized_api_key": {
+          "title": "Authorized Api Key",
+          "type": "string"
+        },
+        "custom_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Custom Headers",
+          "type": "object"
+        },
+        "cache_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Id"
+        },
+        "query_params": {
+          "$ref": "#/$defs/XbergQueryParams",
+          "default": {
+            "output_format": "markdown",
+            "use_cache": null,
+            "force_ocr": null,
+            "ocr": null,
+            "disable_ocr": null,
+            "ocr_strategy": null,
+            "escape_markdown": null,
+            "table_anchors": null,
+            "use_layout_for_markdown": null,
+            "include_document_structure": null,
+            "result_format": null,
+            "extraction_timeout_secs": null
+          }
+        }
+      },
+      "required": [
+        "backend_type",
+        "description",
+        "upstream_url",
+        "authorized_api_key"
+      ],
+      "title": "XbergConfig",
+      "type": "object"
+    },
+    "XbergQueryParams": {
+      "additionalProperties": true,
+      "properties": {
+        "output_format": {
+          "default": "markdown",
+          "enum": [
+            "markdown",
+            "plain"
+          ],
+          "title": "Output Format",
+          "type": "string"
+        },
+        "use_cache": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Use Cache"
+        },
+        "force_ocr": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Force Ocr"
+        },
+        "ocr": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ocr"
+        },
+        "disable_ocr": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Disable Ocr"
+        },
+        "ocr_strategy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ocr Strategy"
+        },
+        "escape_markdown": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Escape Markdown"
+        },
+        "table_anchors": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Anchors"
+        },
+        "use_layout_for_markdown": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Use Layout For Markdown"
+        },
+        "include_document_structure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Include Document Structure"
+        },
+        "result_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Format"
+        },
+        "extraction_timeout_secs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Extraction Timeout Secs"
+        }
+      },
+      "title": "XbergQueryParams",
+      "type": "object"
     }
   },
   "description": "Root schema for backend_config.toml.",
@@ -453,7 +668,8 @@
         "discriminator": {
           "mapping": {
             "docling": "#/$defs/DoclingConfig",
-            "foil": "#/$defs/FoilConfig"
+            "foil": "#/$defs/FoilConfig",
+            "xberg": "#/$defs/XbergConfig"
           },
           "propertyName": "backend_type"
         },
@@ -463,6 +679,9 @@
           },
           {
             "$ref": "#/$defs/DoclingConfig"
+          },
+          {
+            "$ref": "#/$defs/XbergConfig"
           }
         ]
       },
