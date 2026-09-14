@@ -12,18 +12,19 @@ from fastapi_offline import FastAPIOffline
 import alias_routes
 import api
 import auto_routes
-from config.settings import setup_logging
+from config.settings import settings, setup_logging
 from storage import lifespan
 
 setup_logging()
 
 app: FastAPI = FastAPIOffline(
     title="MarkGate",
-    description="""
+    description=f"""
 <div align="center">
     <img src="/statics/markgate_banner.jpg" alt="MarkGate Banner" width="500" />
     </br>
     <b>MarkGate</b>, a proxy for Markdown converter backends with persistent and versioned cache.
+    {'</br><a href="/ui/">Open the WebUI</a>' if settings.enable_ui else ""}
 </div>
     """,
     favicon_url="/favicon.ico",
@@ -31,6 +32,13 @@ app: FastAPI = FastAPIOffline(
 )
 
 app.mount("/statics", StaticFiles(directory=api.STATICS_DIR), name="statics")
+
+# WebUI (webui/ package): its JSON route must be registered before the /ui static mount
+if settings.enable_ui:
+    import webui
+
+    app.include_router(webui.router)
+    app.mount("/ui", StaticFiles(directory=webui.STATIC_DIR, html=True), name="webui")
 
 # auto_routes must be included before api.router: /md/auto/process etc. are literal paths that
 # would otherwise be shadowed by api.router's /md/{version}/process — Starlette matches routes by

@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     verbose_errors: bool = False
     """When True, dependency error details (upstream body, Redis/S3 messages) are forwarded to the client. Disable in production."""
 
+    # WebUI
+    enable_ui: bool = True
+    """Serve the static WebUI (webui/) on /ui."""
+
     # Config paths
     backend_config_path: str = "backend_config.toml"
     """Path to backend_config.toml. Relative to CWD or absolute."""

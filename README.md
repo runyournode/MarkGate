@@ -172,6 +172,18 @@ static alias — auto-selection never causes duplicate upstream processing.
 | `GET /health` | Liveness — always 200 if the app is up |
 | `GET /health/dependencies` | Redis, S3, and upstream backend status (200 / 207 / 503) |
 
+### WebUI
+
+A browser UI is served at **`/ui/`** (link also shown on `/docs`). Pick a file and a processing (backend, static alias or `auto`), click *Convert*:
+the rendered Markdown (with images), raw Markdown and metadata are displayed, and the `.tar.zst` archive can be downloaded in one click.
+
+- `X-Filename` defaults to the selected file name and `Content-Type` to `application/octet-stream`.
+- API keys: one global key and/or one key per backend (aliases use their backend's key, `auto` its own), kept for the tab session or remembered in the browser (`localStorage`, unencrypted).
+- The UI is generated from `/openapi.json`: new backends, aliases or query parameters appear without touching it. Parameters that would be ignored for the current choice (e.g. `spreadsheet_mode` for a non-foil backend or a non-spreadsheet file, `excel_min_output_ratio` outside `auto` mode) are hidden, following `webui/static/param-rules.js`.
+- Disable it with `enable_ui = false` (default `true`).
+
+See [`src/markgate/webui/README.md`](src/markgate/webui/README.md) for details.
+
 ### Running with Docker
 
 ```bash
@@ -218,6 +230,12 @@ All keys are case-insensitive. Environment variables take precedence over the TO
 | Variable / key   | Default | Description                                                                   |
 |------------------|---------|-------------------------------------------------------------------------------|
 | `verbose_errors` | `false` | Forward upstream error details to the client  |
+
+**WebUI**:
+
+| Variable / key | Default | Description                         |
+|----------------|---------|-------------------------------------|
+| `enable_ui`    | `true`  | Serve the browser UI on `/ui/`      |
 
 **Config paths**:
 
@@ -317,6 +335,7 @@ converge on one cache entry.
 | `media.py`               | PIL serialization, base64 helpers, libmagic MIME detection, `mime_to_ext()`, tar.zst builder         |
 | `routing.py`             | Optional auto backend selection: `BackendSelectionContext`/`BackendSelection` contract, `load_selector()` |
 | `auto_routes.py`         | Optional `/auto/*` routes — built only when `auto_route_enabled` is true (see `routing.py`)          |
+| `webui/`                 | Optional WebUI on `/ui` (`enable_ui`): static app in `webui/static/` + `GET /ui/backends.json`       |
 
 ### Key design decisions
 

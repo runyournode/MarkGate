@@ -1,0 +1,176 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --text: #1d2129;
+  --muted: #6b7280;
+  --border: #dde1e7;
+  --accent: #2f6fde;
+  --accent-text: #ffffff;
+  --error-bg: #fdecec;
+  --error: #b42318;
+  --warn-bg: #fff6e0;
+  --warn: #8a5a00;
+  --code-bg: #f0f2f5;
+  --radius: 8px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1d2026;
+    --text: #e6e8eb;
+    --muted: #9aa1ab;
+    --border: #2e333b;
+    --accent: #5b8ff0;
+    --error-bg: #3a1d1d;
+    --error: #ff9b91;
+    --warn-bg: #3a2f14;
+    --warn: #f3c969;
+    --code-bg: #262a31;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+[hidden] { display: none !important; }
+
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.brand strong { font-size: 16px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) 1fr;
+  gap: 16px;
+  padding: 16px 20px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.panel { display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 0;
+}
+h2 { font-size: 15px; margin: 0 0 8px; display: inline-block; }
+
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-weight: 600; font-size: 13px; }
+.field .hint { font-size: 12px; color: var(--muted); }
+
+input[type="text"], input[type="password"], input[type="number"], select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+input:focus, select:focus, .dropzone:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.check { display: flex; gap: 8px; align-items: baseline; margin: 8px 0 12px; }
+
+button {
+  font: inherit;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { width: 100%; background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.ghost { background: transparent; }
+button.danger { color: var(--error); }
+
+.secret { display: flex; gap: 4px; }
+.secret button { padding: 4px 8px; }
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 18px 12px;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.dropzone.over { border-color: var(--accent); background: var(--code-bg); }
+.dropzone.has-file { border-style: solid; }
+
+details summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸"; color: var(--muted); }
+details[open] summary::before { content: "▾"; }
+details[open] summary { margin-bottom: 8px; }
+
+.scoped-keys-title { font-weight: 600; font-size: 13px; margin: 4px 0; }
+
+.alert { padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.alert.error { background: var(--error-bg); color: var(--error); }
+.alert.warn { background: var(--warn-bg); color: var(--warn); }
+
+.results { min-height: 320px; }
+.empty { padding: 60px 0; text-align: center; }
+
+.spinner {
+  display: inline-block; width: 14px; height: 14px; vertical-align: -2px;
+  border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.result-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+pre.tab-panel {
+  margin: 0; padding: 12px; background: var(--code-bg); border-radius: 6px;
+  overflow: auto; max-height: 75vh; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.markdown-body { overflow-wrap: anywhere; }
+.markdown-body img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; }
+.markdown-body img.missing { min-width: 120px; min-height: 40px; background: var(--warn-bg); }
+.markdown-body table { border-collapse: collapse; display: block; overflow-x: auto; margin: 12px 0; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 4px 8px; }
+.markdown-body pre { background: var(--code-bg); padding: 10px; border-radius: 6px; overflow-x: auto; }
+.markdown-body code { background: var(--code-bg); padding: 1px 4px; border-radius: 4px; }
+.markdown-body pre code { background: none; padding: 0; }
+.markdown-body blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.gallery figure { margin: 0; border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: var(--bg); }
+.gallery img { width: 100%; height: 160px; object-fit: contain; cursor: zoom-in; }
+.gallery figcaption { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 # venv and cache
 .venv
-src/markgate/__pycache__/
+__pycache__/
 
 # IDE
 .idea

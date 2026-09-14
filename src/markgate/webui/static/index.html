@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarkGate WebUI</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>MarkGate</strong> <span class="muted">WebUI</span>
+    </div>
+    <nav>
+      <a href="../docs" target="_blank" rel="noopener">API docs</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="panel">
+      <div id="load-error" class="alert error" hidden></div>
+
+      <section class="card">
+        <h2>Processing</h2>
+        <form id="process-form" autocomplete="off">
+          <div id="file-drop" class="dropzone" tabindex="0">
+            <input id="file-input" type="file" hidden>
+            <span id="file-label">Drop a file here or <u>browse</u></span>
+          </div>
+          <div class="field">
+            <label for="processing-select">Processing *</label>
+            <select id="processing-select"></select>
+            <div id="operation-description" class="hint"></div>
+          </div>
+          <div id="params"></div>
+          <button id="submit" class="primary" type="submit" disabled>Convert</button>
+        </form>
+      </section>
+
+      <section id="keys-card" class="card" hidden>
+        <details id="keys-details">
+          <summary><h2>API keys</h2><span id="keys-status" class="muted small"></span></summary>
+          <div class="field">
+            <label for="key-global">Global key</label>
+            <div class="secret">
+              <input id="key-global" type="password" placeholder="Bearer token used by default">
+              <button type="button" class="ghost toggle-secret" aria-label="Show key">👁</button>
+            </div>
+          </div>
+          <div id="keys-scoped"></div>
+          <label class="check">
+            <input id="keys-remember" type="checkbox">
+            <span>Remember keys in this browser<br><span class="muted small">Stored unencrypted in localStorage; otherwise kept for this tab session only.</span></span>
+          </label>
+          <button id="keys-clear" type="button" class="ghost danger">Clear all keys</button>
+        </details>
+      </section>
+    </aside>
+
+    <section class="results card" id="results">
+      <div id="result-empty" class="empty muted">Select a file and click <em>Convert</em>.</div>
+      <div id="result-busy" class="empty" hidden><span class="spinner"></span> Processing…</div>
+      <div id="result-error" class="alert error" hidden></div>
+
+      <div id="result" hidden>
+        <div class="result-head">
+          <div id="result-info" class="muted small"></div>
+          <div class="actions">
+            <button id="copy-md" type="button" class="ghost">Copy Markdown</button>
+            <button id="download" type="button">Download .tar.zst</button>
+          </div>
+        </div>
+        <div id="images-error" class="alert warn" hidden></div>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-tab="preview" class="active">Preview</button>
+          <button type="button" role="tab" data-tab="markdown">Markdown</button>
+          <button type="button" role="tab" data-tab="metadata">Metadata</button>
+          <button type="button" role="tab" data-tab="images">Images <span id="images-count"></span></button>
+        </div>
+        <div class="tab-panel markdown-body" data-panel="preview"></div>
+        <pre class="tab-panel" data-panel="markdown" hidden><code id="md-raw"></code></pre>
+        <pre class="tab-panel" data-panel="metadata" hidden><code id="md-meta"></code></pre>
+        <div class="tab-panel gallery" data-panel="images" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="vendor/fzstd-0.1.1.min.js"></script>
+  <script src="vendor/marked-15.0.12.min.js"></script>
+  <script src="vendor/purify-3.2.6.min.js"></script>
+  <script src="tar.js"></script>
+  <script src="param-rules.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -49,6 +49,11 @@ failed_requests_s3_prefix = "failed_requests"
 failed_requests_local_dir = "/tmp/markgate_failed"
 
 # ---------------------------------------------------------------------------
+# WebUI
+# ---------------------------------------------------------------------------
+enable_ui = true   # true = serve the browser UI on /ui
+
+# ---------------------------------------------------------------------------
 # Config Paths
 # ---------------------------------------------------------------------------
 backend_config_path = "config/backend_config.toml"
