@@ -35,6 +35,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Read project version
+        id: version
+        run: echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -45,6 +49,8 @@ jobs:
             type=raw,value=main,enable={{is_default_branch}}
             # dev branch — format() avoids single-quote/YAML parsing conflict in GitHub expressions
             type=raw,value=dev,enable=${{ github.ref == format('refs/heads/{0}', 'dev') }}
+            # dev branch — versioned dev image, e.g. 0.1.6-dev (moves on every push to dev)
+            type=raw,value=${{ steps.version.outputs.version }}-dev,enable=${{ github.ref == format('refs/heads/{0}', 'dev') }}
             # semver releases
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
