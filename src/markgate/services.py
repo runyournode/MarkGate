@@ -5,19 +5,19 @@ import time
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path as FilePath
+from typing import NamedTuple
 from urllib.parse import quote, urlparse
 
 import httpx
 import redis
 from fastapi import BackgroundTasks, HTTPException
-from PIL import Image
 
 from backends import BACKEND_HANDLERS
 from config.loader import VERSION_CONFIGS
 from config.settings import settings
 from contracts import ProcessingConfig
 from schemas import Metadata
-from media import batch_bytes_to_pil, get_mime_type, mime_to_ext
+from media import get_mime_type, mime_to_ext
 from schemas import (
     S3Metadata,
     S3FileAliases,
@@ -56,19 +56,43 @@ def get_lock_name(file_hash: str, signature: str) -> str:
     return f"lock:processing:{file_hash}:{signature}"
 
 
-def build_s3_keys(file_hash: str, signature: str) -> tuple[str, str, str, str]:
-    """Returns (s3_root_key, s3_content_key, s3_metadata_key, s3_imgs_key).
+class ImageKeys(NamedTuple):
+    """Where a processing's images live in S3."""
+
+    root: str
+    """Prefix of the image objects; an image's key is f"{root}/{its Markdown path}"."""
+    names_key: str
+    """_images_names.txt: Markdown paths of this processing's images, one per line (internal)."""
+
+
+def images_root(file_hash: str, signature: str, config: ProcessingConfig) -> str:
+    """documents/{hash}/{backend_type} for content-named images (shared by every processing of
+    the backend, see ProcessingConfig.content_addressed_images), else
+    documents/{hash}/{signature}/images."""
+    if config.content_addressed_images:
+        return f"documents/{file_hash}/{config.backend_type}"
+    return f"documents/{file_hash}/{signature}/images"
+
+
+def build_s3_keys(
+    file_hash: str, signature: str, config: ProcessingConfig
+) -> tuple[str, str, str, ImageKeys]:
+    """Returns (s3_root_key, s3_content_key, s3_metadata_key, image_keys).
 
     s3_root_key     : documents/{hash}/{signature}
     s3_content_key  : documents/{hash}/{signature}/content.md
     s3_metadata_key : documents/{hash}/{signature}/metadata.json   (backend metadata)
-    s3_imgs_key     : documents/{hash}/{signature}/images
+    image_keys      : see ImageKeys / images_root()
 
     `signature` comes from ProcessingConfig.cache_key() — see that method's docstring for what
     identifies "the same processing" across Versions and per-request overrides.
     """
     root = f"documents/{file_hash}/{signature}"
-    return root, f"{root}/content.md", f"{root}/metadata.json", f"{root}/images"
+    image_keys = ImageKeys(
+        root=images_root(file_hash, signature, config),
+        names_key=f"{root}/_images_names.txt",
+    )
+    return root, f"{root}/content.md", f"{root}/metadata.json", image_keys
 
 
 def build_s3_bg_keys(file_hash: str, signature: str, mime: str) -> tuple[str, str, str]:
@@ -192,20 +216,30 @@ async def background_update_s3(
 
 async def update_s3_processed(
     processed_document: ProcessedDocument,
+    config: ProcessingConfig,
     s3_content_key: str,
     s3_metadata_key: str,
-    s3_imgs_key: str,
+    image_keys: ImageKeys,
     version: Enum,
     filename: str,
 ) -> None:
-    """Upload the processed document (Markdown, metadata, images) to S3.
+    """Upload the processed document (images, image names, metadata, Markdown) to S3.
 
+    content.md is written last: its presence is what makes a cache hit, so an interrupted write
+    never yields a hit with missing images or metadata.
     Must be called within the versioned Redis lock, not as a background task.
     """
-    start = time.perf_counter()
-    await s3_put_content(s3_content_key, processed_document.page_content)
-    logger.info(
-        f"CACHE [{version.value}] | WRITE content.md | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+    images = processed_document.images
+    if images:
+        start = time.perf_counter()
+        written = await s3_put_imgs(
+            image_keys.root, images, skip_existing=config.content_addressed_images
+        )
+        logger.info(
+            f"CACHE [{version.value}] | WRITE images ({written} new / {len(images)}) | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+        )
+    await s3_put_content(
+        image_keys.names_key, "\n".join(images), content_type="text/plain"
     )
 
     if processed_document.metadata:
@@ -215,12 +249,11 @@ async def update_s3_processed(
             f"CACHE [{version.value}] | WRITE metadata.json | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
         )
 
-    if processed_document.images:
-        start = time.perf_counter()
-        await s3_put_imgs(s3_imgs_key, processed_document.images)
-        logger.info(
-            f"CACHE [{version.value}] | WRITE images ({len(processed_document.images)}) | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
-        )
+    start = time.perf_counter()
+    await s3_put_content(s3_content_key, processed_document.page_content)
+    logger.info(
+        f"CACHE [{version.value}] | WRITE content.md | {(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
+    )
 
 
 async def save_failed_request(
@@ -287,28 +320,50 @@ async def save_failed_request(
 async def gather_images(
     processed_document: ProcessedDocument,
     from_cache: bool,
-    s3_imgs_key: str,
+    image_keys: ImageKeys,
     version: Enum,
     filename: str,
-) -> dict[str, Image.Image]:
-    """Return this document's images as PIL objects.
+) -> dict[str, bytes]:
+    """Return this document's images (raw bytes, keyed by Markdown path).
 
     On a fresh upstream call, `processed_document.images` already carries them — no IO. On a cache
     hit, `_resolve_document()` always returns `images={}` (cache reads skip S3 image retrieval
-    unless needed) — this fetches and decodes them from S3 instead, logging the read the same way
-    update_s3_processed() logs the write.
+    unless needed) — this reads the processing's _images_names.txt and fetches exactly those
+    images, so only images of this processing are served even from a shared images folder.
     """
     if not from_cache:
         return processed_document.images
 
     start = time.perf_counter()
-    images_bytes = await s3_get_imgs(s3_imgs_key)
-    images = await asyncio.to_thread(batch_bytes_to_pil, images_bytes)
+    if not await s3_key_exists(image_keys.names_key):
+        logger.warning(
+            f"CACHE [{version.value}] | _images_names.txt missing, serving no image | File: {filename}"
+        )
+        return {}
+    names = [
+        name
+        for name in (await s3_get_content(image_keys.names_key)).splitlines()
+        if name
+    ]
+    images = await s3_get_imgs(image_keys.root, names)
+    if missing := [name for name in names if name not in images]:
+        logger.warning(
+            f"CACHE [{version.value}] | {len(missing)} image(s) listed but not in S3: {missing} | File: {filename}"
+        )
     logger.info(
         f"CACHE [{version.value}] | READ images ({len(images)}) | "
         f"{(time.perf_counter() - start) * 1000:.0f} ms | File: {filename}"
     )
     return images
+
+
+async def get_images_by_name(
+    file_hash: str, config: ProcessingConfig, names: list[str]
+) -> tuple[dict[str, bytes], list[str]]:
+    """Fetch content-named images of a document by Markdown path (POST /images).
+    Returns (found images, missing names). `config` only needs to be of the images' backend."""
+    images = await s3_get_imgs(images_root(file_hash, "", config), names)
+    return images, [name for name in names if name not in images]
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +392,7 @@ async def _resolve_document(
     upstream_headers: dict[str, str],
     s3_content_key: str,
     s3_metadata_key: str,
-    s3_imgs_key: str,
+    image_keys: ImageKeys,
     lock_name: str,
     force_reprocess: bool,
 ) -> tuple[ProcessedDocument, bool]:
@@ -431,9 +486,10 @@ async def _resolve_document(
             try:
                 await update_s3_processed(
                     processed_document,
+                    config,
                     s3_content_key,
                     s3_metadata_key,
-                    s3_imgs_key,
+                    image_keys,
                     version,
                     filename,
                 )
@@ -483,7 +539,7 @@ async def resolve_request(
     file_content: bytes,
     force_reprocess: bool,
     route: str = "",
-) -> tuple[ProcessedDocument, bool, str, str, str, float]:
+) -> tuple[ProcessedDocument, bool, str, str, ImageKeys, float]:
     """Shared preamble for all process routes.
 
     `config` is the Version's ProcessingConfig with any per-request overrides already applied
@@ -492,7 +548,10 @@ async def resolve_request(
     Computes the hash, logs the incoming request, schedules the S3 background
     update, and resolves the document (cache or upstream).
 
-    Returns (processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time).
+    The response metadata is completed with `source_sha256` and `extraction_engine` (not stored:
+    both are known from the request), which a client needs to call POST /images.
+
+    Returns (processed_document, from_cache, filename, file_hash, image_keys, start_time).
     Raises HTTPException on lock timeout (504) or upstream failure (502).
     """
     start_time = time.perf_counter()
@@ -509,8 +568,8 @@ async def resolve_request(
         f"REQ [{version.value}]{label} | File: {filename} | Hash: {file_hash} | MIME: {mime} | Key: {signature} | ClientKey: {api_key[:4]}***"
     )
 
-    _, s3_content_key, s3_metadata_key, s3_imgs_key = build_s3_keys(
-        file_hash, signature
+    _, s3_content_key, s3_metadata_key, image_keys = build_s3_keys(
+        file_hash, signature, config
     )
     lock_name = get_lock_name(file_hash, signature)
 
@@ -538,7 +597,7 @@ async def resolve_request(
             },
             s3_content_key=s3_content_key,
             s3_metadata_key=s3_metadata_key,
-            s3_imgs_key=s3_imgs_key,
+            image_keys=image_keys,
             lock_name=lock_name,
             force_reprocess=force_reprocess,
         )
@@ -563,7 +622,16 @@ async def resolve_request(
             detail += f"\nUpstream response body: {e.response.text}"
         raise HTTPException(status_code=502, detail=detail)
 
-    return processed_document, from_cache, filename, file_hash, s3_imgs_key, start_time
+    existing = processed_document.metadata.root if processed_document.metadata else {}
+    processed_document.metadata = Metadata(
+        {
+            **existing,
+            "source_sha256": file_hash,
+            "extraction_engine": config.backend_type,
+        }
+    )
+
+    return processed_document, from_cache, filename, file_hash, image_keys, start_time
 
 
 async def check_backends_health() -> dict[str, tuple[str, str | None]]:

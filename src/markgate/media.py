@@ -1,84 +1,17 @@
-"""Media utilities: PIL image serialization/deserialization and archive building."""
+"""Media utilities: MIME detection, file extensions and archive building."""
 
-import base64
 import mimetypes
 import tarfile
 from io import BytesIO
 
 import magic
 import zstandard
-from PIL import Image
 from pydantic import BaseModel
 
 
-# Fast-path for the most common formats
-_PIL_FORMAT_TO_MIME: dict[str, str] = {
-    "JPEG": "image/jpeg",
-    "PNG": "image/png",
-    "WEBP": "image/webp",
-    "BMP": "image/bmp",
-    "TIFF": "image/tiff",
-    "GIF": "image/gif",
-}
-
-# Inverted PIL extension registry: {"JPEG": ".jpg", "PNG": ".png", ...}
-# Built once at import time. PIL maps extensions → formats; we need the reverse.
-_PIL_FORMAT_TO_EXT: dict[str, str] = {
-    fmt: ext for ext, fmt in Image.registered_extensions().items()
-}
-
-
-def pil_format_to_mime(format_: str) -> str:
-    """Resolve a PIL format string to a MIME type.
-    Fast-path via known dict, then falls back to PIL's own extension registry + stdlib mimetypes.
-    """
-    if mime := _PIL_FORMAT_TO_MIME.get(format_):
-        return mime
-    if (ext := _PIL_FORMAT_TO_EXT.get(format_)) and (
-        mime := mimetypes.types_map.get(ext.lower())
-    ):
-        return mime
-    return "application/octet-stream"
-
-
-def pil_to_bytes(img: Image.Image) -> bytes:
-    """Serialize a PIL image to bytes preserving its original format.
-    Falls back to JPEG if the format is unknown.
-    JPEG-specific options (quality, subsampling) are only applied for JPEG.
-    """
-    format_ = img.format or "JPEG"
-    buffer = BytesIO()
-    if format_ == "JPEG":
-        img.save(buffer, format=format_, quality=95, subsampling=0)
-    else:
-        img.save(buffer, format=format_)
-    return buffer.getvalue()
-
-
-def batch_pil_to_bytes(images: dict[str, Image.Image]) -> dict[str, bytes]:
-    """Serialize a dict of PIL images to bytes, preserving original formats."""
-    return {name: pil_to_bytes(img) for name, img in images.items()}
-
-
-def base64_to_pil(base64_str: str) -> Image.Image:
-    """Decode a base64 string to a PIL Image."""
-    img_data = base64.b64decode(base64_str)
-    return Image.open(BytesIO(img_data))
-
-
-def batch_b64_to_pil(images_b64: dict[str, str]) -> dict[str, Image.Image]:
-    """Decode a dict of base64 strings to PIL images."""
-    return {name: base64_to_pil(b64) for name, b64 in images_b64.items()}
-
-
-def bytes_to_pil(data: bytes) -> Image.Image:
-    """Decode raw image bytes (e.g. read back from S3) to a PIL Image."""
-    return Image.open(BytesIO(data))
-
-
-def batch_bytes_to_pil(images: dict[str, bytes]) -> dict[str, Image.Image]:
-    """Decode a dict of raw image bytes to PIL images."""
-    return {name: bytes_to_pil(data) for name, data in images.items()}
+def image_mime(name: str) -> str:
+    """MIME type of an image from its file name (e.g. "imgs/6f71….jpg" -> "image/jpeg")."""
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
 
 
 def get_mime_type(content: bytes) -> str:

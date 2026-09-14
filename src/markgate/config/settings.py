@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     since the backend isn't known until after the file has been inspected. Empty = /auto/* routes
     always reject (fail closed)."""
 
+    client_api_key_images: str = ""  # Secret — set in .env_secret
+    """Bearer token for POST /images. Images are looked up by document hash, not through a
+    Version, so no backend key applies. Empty = POST /images always rejects (fail closed)."""
+
     max_upload_size_bytes: int | None = None
     """Reject uploads over this size with 413 before running any auto-selection logic. None = no
     limit. Enforced only on /auto/*, to stop a selector from doing work on an oversized file

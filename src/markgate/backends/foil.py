@@ -5,12 +5,17 @@ API contract:
   Body: raw file bytes
   Params: query_params as URL query parameters
   Response JSON: {page_content: str, images: {name: b64}, metadata: {...}}
+
+Images are named after their content by foil-serve ("imgs/<first 16 hex of sha256(jpeg)>.jpg",
+see foil_serve.utils.EncodedImage) and kept as the exact bytes it sent, so the name stays a prefix
+of the served file's sha256.
 """
 
-import asyncio
+import base64
 import json
+import re
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import httpx
 from fastapi import Query
@@ -18,7 +23,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backends.utils import merge_headers
 from contracts import ProcessingConfig
-from media import batch_b64_to_pil
 from schemas import Metadata, ProcessedDocument
 
 # MIME types for which foil-serve's spreadsheet_mode/excel_min_output_ratio actually have an
@@ -28,6 +32,10 @@ SPREADSHEET_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.oasis.opendocument.spreadsheet",
 }
+
+IMAGES_DIR = "imgs"
+# foil-serve's image file name: first 16 hex chars of the JPEG's sha256
+_IMAGE_BASENAME = re.compile(r"^[0-9a-f]{16}\.jpg$")
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +128,8 @@ class FoilRouteAlias(BaseModel):
 
 
 class FoilConfig(ProcessingConfig):
+    content_addressed_images: ClassVar[bool] = True
+
     backend_type: Literal["foil"]
     query_params: FoilQueryParams = FoilQueryParams()
     aliases: list[FoilRouteAlias] = Field(default_factory=list)
@@ -139,6 +149,14 @@ class FoilConfig(ProcessingConfig):
             }
         )
         return self.model_copy(update={"query_params": merged})
+
+    @classmethod
+    def normalize_image_name(cls, name: str) -> str | None:
+        """Accept "<sha16>.jpg" or "imgs/<sha16>.jpg"; return "imgs/<sha16>.jpg"."""
+        basename = name.removeprefix(f"{IMAGES_DIR}/")
+        if not _IMAGE_BASENAME.fullmatch(basename):
+            return None
+        return f"{IMAGES_DIR}/{basename}"
 
     def get_raw_query_params(self, mime: str = "") -> dict[str, Any]:
         """Resolve this config's query params for a file of the given MIME type, dropping keys
@@ -205,10 +223,12 @@ async def call(
     if not page_content:
         raise ValueError(f"Upstream returned empty page_content. Full response: {data}")
 
-    imgs = await asyncio.to_thread(batch_b64_to_pil, data.get("images", {}))
+    images = {
+        name: base64.b64decode(b64) for name, b64 in (data.get("images") or {}).items()
+    }
 
     return ProcessedDocument(
         page_content=page_content,
-        images=imgs,
+        images=images,
         metadata=Metadata(data.get("metadata", {})),
     )

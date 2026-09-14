@@ -8,7 +8,7 @@ It lives here — outside both packages — to break the mutual dependency:
 
 import os
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,6 +20,12 @@ class ProcessingConfig(BaseModel):
     # backend_config.toml (e.g. `aliases` under a backend_type that doesn't declare that field,
     # see backends.foil.FoilConfig) fails validation at startup instead of being silently dropped.
     model_config = ConfigDict(extra="forbid")
+
+    content_addressed_images: ClassVar[bool] = False
+    """True when the backend names its images after their content (e.g. a hash of their bytes):
+    every processing of a document then yields the same names for the same images, so they are
+    stored once per backend and can be looked up by name alone (POST /images). False: images
+    are stored per processing signature and can't be looked up by name."""
 
     backend_type: str
     """Handler key — must match a registered entry in backends.BACKEND_HANDLERS."""
@@ -45,6 +51,13 @@ class ProcessingConfig(BaseModel):
     def get_raw_query_params(self) -> dict[str, Any]:
         """Return query/form params as a plain dict, ready for the backend handler."""
         return {}
+
+    @classmethod
+    def normalize_image_name(cls, name: str) -> str | None:
+        """Return `name` as this backend writes it in its Markdown (e.g. "imgs/<sha16>.jpg"), or
+        None if it isn't a valid image name for this backend. Only meaningful with
+        content_addressed_images; base: no image lookup by name."""
+        return None
 
     def with_overrides(self, overrides: Any) -> "ProcessingConfig":
         """Apply per-request overrides on top of this (TOML-configured) config, if this backend

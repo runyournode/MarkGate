@@ -17,7 +17,6 @@ dependencies = [
     "python-multipart>=0.0.9",
     "python-dotenv>=1.0.0",
     "python-magic>=0.4.27",
-    "pillow>=12.1.1",
     "zstandard>=0.23.0",
     "pydantic>=2.12.5",
 ]

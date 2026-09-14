@@ -19,14 +19,14 @@ from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import Response
 
 from contracts import ProcessingConfig
-from media import build_tar_zst, batch_pil_to_bytes
+from media import build_tar_zst
 from schemas import (
     ExternalDocumentRequestHeaders,
     ProcessedDocument,
     ProcessedDocumentOut,
     ResponseDocument,
 )
-from services import gather_images, resolve_request
+from services import ImageKeys, gather_images, resolve_request
 
 logger = logging.getLogger("markgate")
 
@@ -39,7 +39,7 @@ class ProcessResult(NamedTuple):
     processed_document: ProcessedDocument
     from_cache: bool
     filename: str
-    s3_imgs_key: str
+    image_keys: ImageKeys
     version: Enum
     start_time: float
 
@@ -68,7 +68,7 @@ async def run(
         from_cache,
         filename,
         _,
-        s3_imgs_key,
+        image_keys,
         start_time,
     ) = await resolve_request(
         headers_data,
@@ -81,7 +81,7 @@ async def run(
         route=route,
     )
     return ProcessResult(
-        processed_document, from_cache, filename, s3_imgs_key, version, start_time
+        processed_document, from_cache, filename, image_keys, version, start_time
     )
 
 
@@ -106,7 +106,7 @@ async def as_json_with_images(result: ProcessResult) -> ProcessedDocumentOut:
         images = await gather_images(
             result.processed_document,
             result.from_cache,
-            result.s3_imgs_key,
+            result.image_keys,
             result.version,
             result.filename,
         )
@@ -121,9 +121,7 @@ async def as_json_with_images(result: ProcessResult) -> ProcessedDocumentOut:
 
     log_resp(result)
 
-    # ProcessedDocument.serialize_images (base64, original format) can run at serialization time
-    # but can't be turned into a JSON Schema — go through model_dump(mode="json") to reuse it, and
-    # land on ProcessedDocumentOut (images: dict[str, str]), the schema-safe public shape.
+    # model_dump(mode="json") base64-encodes the images (ProcessedDocument.serialize_images)
     document = ProcessedDocument(
         page_content=result.processed_document.page_content,
         images=images,
@@ -138,7 +136,7 @@ async def as_archive(result: ProcessResult) -> Response:
         images = await gather_images(
             result.processed_document,
             result.from_cache,
-            result.s3_imgs_key,
+            result.image_keys,
             result.version,
             result.filename,
         )
@@ -149,12 +147,10 @@ async def as_archive(result: ProcessResult) -> Response:
         images = {}
         images_error = f"Image retrieval from S3 failed: {e}"
 
-    images_bytes = await asyncio.to_thread(batch_pil_to_bytes, images)
-
     archive = await asyncio.to_thread(
         build_tar_zst,
         result.processed_document.page_content,
-        images_bytes,
+        images,
         result.processed_document.metadata,
         images_error,
     )

@@ -60,6 +60,40 @@ Force re-processing (bypass cache), on any of the three routes:
 PUT /md/{backend}/process?force_reprocess=true
 ```
 
+Every response's `metadata` also carries `source_sha256` (sha256 of the uploaded file) and
+`extraction_engine` (backend type, e.g. `foil`) — what a client needs to fetch images later with
+`POST /images`.
+
+#### Image lookup — `POST /images`
+
+Returns images of an already processed document from the cache, by the names written in its
+Markdown — e.g. for a chatbot tool that only has the text. Only backends whose images are named
+after their content support it (today: `foil`, whose images are `imgs/<first 16 hex of sha256>.jpg`).
+
+```
+POST /images
+Authorization: Bearer <client_api_key_images>
+
+{"engine": "foil", "source_sha256": "<64 hex>", "names": ["imgs/6f715daebc26828f.jpg", "0a1b2c3d4e5f6a7b.jpg"]}
+```
+
+- `engine` / `source_sha256`: the `extraction_engine` / `source_sha256` response metadata.
+- `names`: required, 1 to 50; the `imgs/` prefix is optional. An invalid name → `422`.
+- Response: `{"images": {"imgs/6f715daebc26828f.jpg": {"mime": "image/jpeg", "data": "<base64>"}}, "missing": ["imgs/0a1b2c3d4e5f6a7b.jpg"]}`
+- Auth: dedicated `client_api_key_images` (`.env_secret`); empty → always `403`.
+
+From an Open WebUI tool, the metadata of a file processed through MarkGate is stored on its
+vector-DB chunks (not on the file record):
+
+```python
+from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
+
+result = VECTOR_DB_CLIENT.get(collection_name=f"file-{file_id}")
+metadata = result.metadatas[0][0]  # {"source_sha256": "...", "extraction_engine": "foil", ...}
+```
+
+(Not available when `BYPASS_EMBEDDING_AND_RETRIEVAL` is enabled: nothing is written to the vector DB.)
+
 #### Per-request overrides (`foil` backends only)
 
 Foil-backed Versions also accept two optional query params, forwarded to Foil-Serve, on all three
@@ -231,6 +265,12 @@ All keys are case-insensitive. Environment variables take precedence over the TO
 |------------------|---------|-------------------------------------------------------------------------------|
 | `verbose_errors` | `false` | Forward upstream error details to the client  |
 
+**Image lookup** (`POST /images`):
+
+| Variable / key          | Default | Description                                                        |
+|-------------------------|---------|--------------------------------------------------------------------|
+| `client_api_key_images` | —       | Bearer token for `POST /images` — set in `.env_secret`. Empty = always rejected. |
+
 **WebUI**:
 
 | Variable / key | Default | Description                         |
@@ -268,11 +308,13 @@ Authorization = "Bearer ${UPSTREAM_FOIL_API_KEY}"  # MarkGate → backend
 │   └── 📂 {sha256}/
 │       ├── 📄 source.{ext}          # Original file (extension from detected MIME type)
 │       ├── 📄 _aliases.json         # All filenames seen for this content
-│       └── 📂 {backend}/            # backend name (or cache_id if set)
-│           ├── 📄 content.md        # Converted Markdown
+│       ├── 📂 foil/imgs/            # Content-named images, shared by every foil processing (written once)
+│       └── 📂 {signature}/          # resolved processing (ProcessingConfig.cache_key(), e.g. `foil` or `foil/k=v,...`)
+│           ├── 📄 content.md        # Converted Markdown (written last: its presence = cache hit)
 │           ├── 📄 metadata.json     # Backend-provided metadata
+│           ├── 📄 _images_names.txt # Images of this processing, as written in content.md (internal)
 │           ├── 📄 _metadata.json    # Cache hit count, timestamps, last filename
-│           └── 📂 images/           # Extracted images (jpg/png/…)
+│           └── 📂 images/           # Images of backends without content-named images
 └── 📂 failed_requests/
     └── 📂 {timestamp}_{hash}_{backend}/
         ├── 📄 source.{ext}          # File that failed
@@ -328,11 +370,11 @@ converge on one cache entry.
 | `backends/docling.py`    | Docling-serve handler + `DoclingConfig`                                                               |
 | `backends/marker.py`     | Marker handler stub                                                                                   |
 | `backends/chandra.py`    | Chandra handler stub                                                                                  |
-| `schemas.py`             | Pydantic v2 models: request headers, `ProcessedDocument` (internal, PIL images), `ProcessedDocumentOut` (public, base64 images), `ResponseDocument`, `Metadata` |
+| `schemas.py`             | Pydantic v2 models: request headers, `ProcessedDocument` (internal, raw image bytes), `ProcessedDocumentOut` (public, base64 images), `ResponseDocument`, `Metadata`, `ImagesRequest`/`ImagesResponse` |
 | `services.py`            | Core logic: hash + MIME detection, cache resolution, upstream call, S3 writes, header merging        |
 | `storage.py`             | `S3Manager` + `RedisManager` lifecycle, all S3 I/O helpers, `lifespan` context manager               |
 | `security.py`            | `verify_api_key()` FastAPI dependency, `make_alias_api_key_verifier()` for route alias routes, `verify_api_key_auto()` for `/auto/*` |
-| `media.py`               | PIL serialization, base64 helpers, libmagic MIME detection, `mime_to_ext()`, tar.zst builder         |
+| `media.py`               | libmagic MIME detection, `image_mime()`, `mime_to_ext()`, tar.zst builder                            |
 | `routing.py`             | Optional auto backend selection: `BackendSelectionContext`/`BackendSelection` contract, `load_selector()` |
 | `auto_routes.py`         | Optional `/auto/*` routes — built only when `auto_route_enabled` is true (see `routing.py`)          |
 | `webui/`                 | Optional WebUI on `/ui` (`enable_ui`): static app in `webui/static/` + `GET /ui/backends.json`       |
@@ -391,7 +433,10 @@ Currently supported engines (valid `backend_type` values): `foil`, `docling`, `m
 Use this when you need to integrate a new HTTP service that has its own API contract.
 
 1. Create `src/markgate/backends/myengine.py` with:
-   - A `MyEngineConfig(ProcessingConfig)` subclass (declare typed `query_params` if needed)
+   - A `MyEngineConfig(ProcessingConfig)` subclass (declare typed `query_params` if needed).
+     If the engine names its images after their content (same image → same name in every
+     processing), set `content_addressed_images = True` and implement `normalize_image_name()`:
+     images are then stored once per engine and served by `POST /images`.
    - An `async def call(config, file_content, headers, filename, client) -> ProcessedDocument` coroutine
 2. Register it in `backends/__init__.py`:
    - Add `"myengine": myengine.call` to `BACKEND_HANDLERS`

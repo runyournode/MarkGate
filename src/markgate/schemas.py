@@ -1,5 +1,4 @@
 import base64
-import io
 from datetime import datetime
 from urllib.parse import unquote
 from typing import Any
@@ -9,10 +8,8 @@ from pydantic import (
     Field,
     ConfigDict,
     RootModel,
-    field_validator,
     field_serializer,
 )
-from PIL import Image
 
 
 class ExternalDocumentRequestHeaders(BaseModel):
@@ -81,73 +78,63 @@ class ResponseDocument(BaseModel):
 class ProcessedDocument(ResponseDocument):
     """Internal representation returned by `call_upstream_backend`.
 
-    Images are decoded from base64 to PIL inside `call_upstream_backend`.
-    Not sent to the client. Not JSON-serializable due to PIL Image objects.
+    Images are the raw bytes sent by the backend, keyed by their path in the Markdown
+    (e.g. "imgs/6f715daebc26828f.jpg") — never re-encoded.
     """
 
     page_content: str
-    images: dict[str, Image.Image] = Field(default_factory=dict)
+    images: dict[str, bytes] = Field(default_factory=dict)
     metadata: Metadata | None = None
 
-    # allows to have non serializable data in the object (pil images)
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # allow model_dump_json (or model_dump(mode='json')
     @field_serializer("images", when_used="json")
-    def serialize_images(self, images: dict[str, Image.Image]):
-        result = {}
-
-        for key, img in images.items():
-            buffer = io.BytesIO()
-
-            # use original format if known, default to PNG
-            format_ = img.format or "PNG"
-            img.save(buffer, format=format_)
-
-            result[key] = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-        return result
-
-    # allow loading from a model_dump_json
-    @field_validator("images", mode="before")
-    @classmethod
-    def deserialize_images(cls, value):
-        if not value:
-            return {}
-
-        result = {}
-
-        for key, img_data in value.items():
-            if isinstance(img_data, Image.Image):
-                result[key] = img_data
-                continue
-
-            img_bytes = base64.b64decode(img_data)
-            buffer = io.BytesIO(img_bytes)
-
-            img = Image.open(buffer)
-            img.load()  # important
-            buffer.close()
-
-            result[key] = img
-
-        return result
+    def serialize_images(self, images: dict[str, bytes]) -> dict[str, str]:
+        return {
+            name: base64.b64encode(data).decode("ascii")
+            for name, data in images.items()
+        }
 
 
 class ProcessedDocumentOut(ResponseDocument):
-    """Public, JSON-schema-safe counterpart of ProcessedDocument, for routes that include images.
-
-    ProcessedDocument can't be used directly as a FastAPI response_model: its `images` field holds
-    PIL.Image.Image objects (arbitrary_types_allowed=True), and pydantic cannot generate a JSON
-    Schema for that type — FastAPI would fail to build /openapi.json. Build this from a
-    ProcessedDocument via `ProcessedDocumentOut(**doc.model_dump(mode="json"))`, which reuses its
-    `serialize_images` field_serializer (base64, original format) — a serializer runs fine even
-    though its output type can't be described as a schema.
-    """
+    """Public counterpart of ProcessedDocument for routes that include images. Build it from a
+    ProcessedDocument via `ProcessedDocumentOut(**doc.model_dump(mode="json"))`."""
 
     images: dict[str, str] = Field(default_factory=dict)
     """Images as base64-encoded strings, keyed by filename — same encoding as Foil-Serve's own
     /v1/process response."""
+
+
+class ImagesRequest(BaseModel):
+    """Body of POST /images: images of an already processed document, looked up by name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    engine: str = Field(
+        description="Backend type that produced the images — the `extraction_engine` response metadata.",
+        examples=["foil"],
+    )
+    source_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="sha256 of the source document — the `source_sha256` response metadata.",
+    )
+    names: list[str] = Field(
+        min_length=1,
+        max_length=50,
+        description="Image names as written in the Markdown; the images folder prefix is optional.",
+        examples=[["imgs/6f715daebc26828f.jpg", "0a1b2c3d4e5f6a7b.jpg"]],
+    )
+
+
+class ImagePayload(BaseModel):
+    mime: str
+    data: str
+    """base64-encoded image bytes"""
+
+
+class ImagesResponse(BaseModel):
+    images: dict[str, ImagePayload] = Field(default_factory=dict)
+    """Found images, keyed by their name as written in the Markdown."""
+    missing: list[str] = Field(default_factory=list)
+    """Requested names not found in storage."""
 
 
 class FailedRequestInfo(BaseModel):

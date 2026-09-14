@@ -11,8 +11,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from config.settings import settings
-from media import pil_to_bytes, pil_format_to_mime
-from PIL import Image
+from media import image_mime
 
 if TYPE_CHECKING:
     from types_aiobotocore_s3 import S3Client
@@ -114,46 +113,48 @@ async def s3_get_content(key: str) -> str:
         return data.decode("utf-8")
 
 
-async def s3_put_content(key: str, content: str) -> None:
-    """Upload a text/markdown object to S3."""
+async def s3_put_content(
+    key: str, content: str, content_type: str = "text/markdown"
+) -> None:
+    """Upload a text object (Markdown by default) to S3."""
     assert isinstance(content, str)
     await s3_manager.client.put_object(
-        Bucket=settings.s3_bucket, Key=key, Body=content, ContentType="text/markdown"
+        Bucket=settings.s3_bucket, Key=key, Body=content, ContentType=content_type
     )
 
 
-async def s3_put_imgs(root_img_key: str, images: dict[str, Image.Image]) -> None:
-    """Upload images to S3, preserving the original format of each image."""
-    for name, image in images.items():
-        format_ = image.format or "JPEG"
-        await s3_manager.client.put_object(
-            Bucket=settings.s3_bucket,
-            Key=f"{root_img_key}/{name}",
-            Body=pil_to_bytes(image),
-            ContentType=pil_format_to_mime(format_),
-        )
-
-
-async def s3_get_imgs(root_img_key: str) -> dict[str, bytes]:
-    """Retrieve all images stored under root_img_key prefix.
-    Returns {relative_path: bytes} where relative_path matches the original image names
-    and thus the Markdown image references (e.g. 'imgs/figure_1.jpg').
-    """
-    prefix = f"{root_img_key}/"
-    result: dict[str, bytes] = {}
-    response = await s3_manager.client.list_objects_v2(
-        Bucket=settings.s3_bucket, Prefix=prefix
-    )
-    for obj in response.get("Contents", []):
-        key: str = obj["Key"]
-        relative_path = key[len(prefix) :]
-        if not relative_path:
+async def s3_put_imgs(
+    root_img_key: str, images: dict[str, bytes], skip_existing: bool = False
+) -> int:
+    """Upload images as-is under root_img_key, keyed by their Markdown path. With skip_existing,
+    keys already present are left untouched (write-once, for content-named images).
+    Returns the number of images actually written."""
+    written = 0
+    for name, data in images.items():
+        key = f"{root_img_key}/{name}"
+        if skip_existing and await s3_key_exists(key):
             continue
-        img_response = await s3_manager.client.get_object(
-            Bucket=settings.s3_bucket, Key=key
+        await s3_manager.client.put_object(
+            Bucket=settings.s3_bucket, Key=key, Body=data, ContentType=image_mime(name)
         )
-        async with img_response["Body"] as stream:
-            result[relative_path] = await stream.read()
+        written += 1
+    return written
+
+
+async def s3_get_imgs(root_img_key: str, names: list[str]) -> dict[str, bytes]:
+    """Retrieve the named images stored under root_img_key. Names not found are left out."""
+    result: dict[str, bytes] = {}
+    for name in names:
+        try:
+            response = await s3_manager.client.get_object(
+                Bucket=settings.s3_bucket, Key=f"{root_img_key}/{name}"
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                continue
+            raise
+        async with response["Body"] as stream:
+            result[name] = await stream.read()
     return result
 
 

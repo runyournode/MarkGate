@@ -2,6 +2,14 @@
 inert base-class defaults (contracts.ProcessingConfig) that every other backend still relies on.
 """
 
+import asyncio
+import base64
+import hashlib
+
+import httpx
+import pytest
+
+from backends import foil
 from backends.docling import DoclingConfig
 from backends.foil import (
     FoilConfig,
@@ -166,3 +174,70 @@ class TestProcessingConfigBaseDefaults:
             )
             is config
         )
+
+
+class TestContentAddressedImages:
+    """foil-serve names images "imgs/<first 16 hex of sha256(jpeg)>.jpg": foil declares it, other
+    backends keep the per-signature default and don't support lookup by name."""
+
+    def test_foil_declares_content_addressed_images(self):
+        assert FoilConfig.content_addressed_images is True
+        assert DoclingConfig.content_addressed_images is False
+
+    @pytest.mark.parametrize(
+        "name", ["6f715daebc26828f.jpg", "imgs/6f715daebc26828f.jpg"]
+    )
+    def test_images_folder_prefix_is_optional(self, name):
+        assert FoilConfig.normalize_image_name(name) == "imgs/6f715daebc26828f.jpg"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "6F715DAEBC26828F.jpg",  # upper case
+            "6f715daebc26828.jpg",  # 15 hex
+            "6f715daebc26828f0.jpg",  # 17 hex
+            "6f715daebc26828f.png",  # foil only serves JPEG
+            "other/6f715daebc26828f.jpg",
+            "imgs/../6f715daebc26828f.jpg",
+            "../imgs/6f715daebc26828f.jpg",
+            "imgs/imgs/6f715daebc26828f.jpg",
+            "",
+        ],
+    )
+    def test_invalid_names_are_rejected(self, name):
+        assert FoilConfig.normalize_image_name(name) is None
+
+    def test_base_config_does_not_support_lookup_by_name(self):
+        assert DoclingConfig.normalize_image_name("imgs/6f715daebc26828f.jpg") is None
+
+
+class TestFoilCallKeepsRawImageBytes:
+    def test_images_are_the_exact_bytes_sent_by_foil(self):
+        jpeg = b"\xff\xd8\xff\xe0 not re-encoded \xff\xd9"
+        name = f"imgs/{hashlib.sha256(jpeg).hexdigest()[:16]}.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "page_content": f'<img src="{name}">',
+                    "images": {name: base64.b64encode(jpeg).decode()},
+                    "metadata": {},
+                },
+            )
+
+        async def run():
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(handler)
+            ) as client:
+                return await foil.call(
+                    make_foil_config(),
+                    b"%PDF",
+                    {"Content-Type": PDF_MIME},
+                    "f.pdf",
+                    client,
+                )
+
+        document = asyncio.run(run())
+        assert document.images == {name: jpeg}
+        assert hashlib.sha256(document.images[name]).hexdigest().startswith(name[5:21])

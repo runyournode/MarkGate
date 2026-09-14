@@ -1,4 +1,4 @@
-"""HTTP surface: the 3 static process routes, health endpoints, and the favicon — every route
+"""HTTP surface: the 3 static process routes, image lookup, health endpoints, and the favicon — every route
 that's known at code-writing time, declared with @router.put/@router.get decorators. Mirrors
 foil-serve's api.py (a `router = APIRouter()` holding all the routes). Dynamically generated
 routes (one triple per backend_config.toml alias, count unknown until the config is loaded) live
@@ -9,25 +9,41 @@ overrides applied) and delegate to responders.run() — and differ only in how t
 response via responders.as_md() / as_json_with_images() / as_archive().
 """
 
+import base64
+import logging
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+)
 from fastapi.responses import JSONResponse, FileResponse, Response
 
 import responders
 from backends.foil import SpreadsheetOverrides
+from media import image_mime
 from schemas import (
     ExternalDocumentRequestHeaders,
+    ImagePayload,
+    ImagesRequest,
+    ImagesResponse,
     ProcessedDocumentOut,
     ProxyOutput,
     ServiceHealth,
     DependenciesHealth,
 )
-from security import verify_api_key
-from services import check_backends_health
-from storage import check_redis_health, check_s3_health
+from security import verify_api_key, verify_api_key_images
+from services import check_backends_health, get_images_by_name
+from storage import check_redis_health, check_s3_health, s3_is_active
 from config.loader import VERSION_CONFIGS, Version
+
+logger = logging.getLogger("markgate")
 
 router = APIRouter()
 
@@ -126,6 +142,69 @@ async def process_document_download(
             force_reprocess,
             route="DOWNLOAD",
         )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Image lookup
+# ---------------------------------------------------------------------------
+
+
+@router.post("/images", response_model=ImagesResponse, tags=["Images"])
+async def get_images(
+    request: ImagesRequest,
+    api_key: Annotated[str, Depends(verify_api_key_images)],
+) -> ImagesResponse:
+    """Return images of an already processed document from the cache, by name.
+
+    `engine` and `source_sha256` are the `extraction_engine` / `source_sha256` metadata of the
+    process responses; `names` are image paths as written in the Markdown. Only backends whose
+    images are named after their content support this lookup (e.g. foil).
+    """
+    config = next(
+        (cfg for cfg in VERSION_CONFIGS.values() if cfg.backend_type == request.engine),
+        None,
+    )
+    if config is None or not config.content_addressed_images:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Engine '{request.engine}' does not support image lookup.",
+        )
+    names: list[str] = []
+    for raw_name in request.names:
+        name = config.normalize_image_name(raw_name)
+        if name is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid image name for engine '{request.engine}': {raw_name!r}",
+            )
+        if name not in names:
+            names.append(name)
+
+    if not s3_is_active():
+        raise HTTPException(
+            status_code=503, detail="Image cache (S3) is not available."
+        )
+    try:
+        images, missing = await get_images_by_name(request.source_sha256, config, names)
+    except Exception as e:
+        logger.error(
+            f"IMAGES [{request.engine}] | S3 read failed | Hash: {request.source_sha256} | Error: {e}"
+        )
+        raise HTTPException(status_code=502, detail="Image retrieval from S3 failed.")
+
+    logger.info(
+        f"IMAGES [{request.engine}] | {len(images)} found, {len(missing)} missing | "
+        f"Hash: {request.source_sha256} | ClientKey: {api_key[:4]}***"
+    )
+    return ImagesResponse(
+        images={
+            name: ImagePayload(
+                mime=image_mime(name), data=base64.b64encode(data).decode("ascii")
+            )
+            for name, data in images.items()
+        },
+        missing=missing,
     )
 
 

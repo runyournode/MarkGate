@@ -59,6 +59,22 @@ def make_alias_api_key_verifier(
     return _verify
 
 
+def _check_dedicated_bearer(
+    auth: HTTPAuthorizationCredentials | None, expected_key: str, scope: str
+) -> str:
+    """Check the client's Bearer token against a key that isn't tied to a Version. Fails closed
+    (always rejects) when `expected_key` is unset."""
+    api_key = auth.credentials if auth else None
+    if not api_key or not expected_key or api_key != expected_key:
+        masked_key = (api_key[:4] + "***") if api_key else "None"
+        logger.warning(f"AUTH | Unauthorized access for {scope} | Key: {masked_key}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Unauthorized access for {scope}. Key provided: {masked_key}",
+        )
+    return api_key
+
+
 async def verify_api_key_auto(
     auth: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
@@ -69,13 +85,12 @@ async def verify_api_key_auto(
     Uses a dedicated CLIENT_API_KEY_AUTO instead — fails closed (always rejects) if it's unset,
     same as leaving a backend's authorized_api_key blank would.
     """
-    api_key = auth.credentials if auth else None
-    expected_key = settings.client_api_key_auto
-    if not api_key or not expected_key or api_key != expected_key:
-        masked_key = (api_key[:4] + "***") if api_key else "None"
-        logger.warning(f"AUTH | Unauthorized access for /auto/* | Key: {masked_key}")
-        raise HTTPException(
-            status_code=403,
-            detail=f"Unauthorized access for /auto/*. Key provided: {masked_key}",
-        )
-    return api_key
+    return _check_dedicated_bearer(auth, settings.client_api_key_auto, "/auto/*")
+
+
+async def verify_api_key_images(
+    auth: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    """Check the client's Bearer token for POST /images against CLIENT_API_KEY_IMAGES (images
+    are looked up by document hash, not through a Version). Fails closed if it's unset."""
+    return _check_dedicated_bearer(auth, settings.client_api_key_images, "/images")
