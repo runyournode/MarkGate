@@ -29,8 +29,8 @@ Backends are declared in `backend_config.toml` — the list below reflects the d
 | `foil`                | [Foil Serve](https://github.com/RunYourNode/foil-serve)        | Production-ready          |
 | `foil-ministral-3-3b` | Foil Serve + Ministral-3B VLM image description                | Production-ready     |
 | `foil-qwen-3.5-27b`   | Foil Serve + Qwen-3.5-27B VLM image description                | Production-ready |
-| `docling`             | Docling-serve (tesseract OCR)                                   | Tested in early stages    |
-| `docling-vl`          | Docling-serve + VLM image description                           | Tested in early stages    |
+| `docling-standard`    | [docling-serve-plus](https://github.com/runyournode/docling-serve-plus) air-gap deployment — heron-101 + nemotron OCR + CodeFormula + image description | Tested in early stages    |
+| `docling-vlm`         | Same deployment — dots.mocr VLM pipeline + image description    | Tested in early stages    |
 
 Adding a new instance of an existing engine requires editing `backend_config.toml`. Adding a new engine type requires Python code (see developer section below).
 
@@ -68,7 +68,9 @@ Every response's `metadata` also carries `source_sha256` (sha256 of the uploaded
 
 Returns images of an already processed document from the cache, by the names written in its
 Markdown — e.g. for a chatbot tool that only has the text. Only backends whose images are named
-after their content support it (today: `foil`, whose images are `imgs/<first 16 hex of sha256>.jpg`).
+after their content support it: `foil` (`imgs/<first 16 hex of sha256>.jpg`) and `docling`
+(same naming, `.png`; with `image_export_mode = "embedded"`, the pictures docling inlines are
+extracted and renamed that way).
 
 ```
 POST /images
@@ -223,10 +225,11 @@ See [`src/markgate/webui/README.md`](src/markgate/webui/README.md) for details.
 ```bash
 # Production stack (MarkGate + Valkey/Redis)
 docker compose -f docker/compose.yaml up
-
-# With Docling backend
-docker compose -f docker/compose.yaml --profile dev-tools-docling up
 ```
+
+Upstream backends run in their own stacks and are reached through the host (`extra_hosts`):
+foil-serve, xberg, and docling-serve — the latter from the docling-serve-plus air-gap deployment
+(`deploiement-airgap/`, port 5001), used by the `docling-standard` and `docling-vlm` backends.
 
 Configuration lives in `docker/mounts_config/markgate/config/`:
 

@@ -37,4 +37,3 @@ async def select(ctx: BackendSelectionContext) -> BackendSelection:
         )
     else:
         return BackendSelection(version=Version("xberg"))
-

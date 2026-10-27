@@ -13,7 +13,6 @@ of the served file's sha256.
 
 import base64
 import json
-import re
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
@@ -21,7 +20,7 @@ import httpx
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from backends.utils import merge_headers
+from backends.utils import merge_headers, normalize_content_image_name
 from contracts import ProcessingConfig
 from schemas import Metadata, ProcessedDocument
 
@@ -32,11 +31,6 @@ SPREADSHEET_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.oasis.opendocument.spreadsheet",
 }
-
-IMAGES_DIR = "imgs"
-# foil-serve's image file name: first 16 hex chars of the JPEG's sha256
-_IMAGE_BASENAME = re.compile(r"^[0-9a-f]{16}\.jpg$")
-
 
 # ---------------------------------------------------------------------------
 # Per-request overrides
@@ -71,7 +65,7 @@ class SpreadsheetOverrides(BaseModel):
             None,
             description="Override this Version's spreadsheet conversion strategy "
             "(auto/pandas/ocr/both). Ignored for non-spreadsheet inputs. "
-            "**Only has an effect on backend_type=\"foil\" Versions** — accepted (no error) but "
+            '**Only has an effect on backend_type="foil" Versions** — accepted (no error) but '
             "silently discarded, with no effect, on every other backend_type (docling, xberg, ...).",
         ),
         excel_min_output_ratio: float | None = Query(
@@ -79,8 +73,8 @@ class SpreadsheetOverrides(BaseModel):
             ge=0.0,
             description="Override the sparse-output threshold that triggers PDF+OCR fallback "
             "in 'auto' mode. Ignored outside 'auto' mode and for non-spreadsheet inputs. "
-            "**Only has an effect on backend_type=\"foil\" Versions** — accepted (no error) but "
-            "silently discarded, with no effect, on every other backend_type (docling, xberg, ...)."
+            '**Only has an effect on backend_type="foil" Versions** — accepted (no error) but '
+            "silently discarded, with no effect, on every other backend_type (docling, xberg, ...).",
         ),
     ) -> "SpreadsheetOverrides":
         return cls(
@@ -153,10 +147,7 @@ class FoilConfig(ProcessingConfig):
     @classmethod
     def normalize_image_name(cls, name: str) -> str | None:
         """Accept "<sha16>.jpg" or "imgs/<sha16>.jpg"; return "imgs/<sha16>.jpg"."""
-        basename = name.removeprefix(f"{IMAGES_DIR}/")
-        if not _IMAGE_BASENAME.fullmatch(basename):
-            return None
-        return f"{IMAGES_DIR}/{basename}"
+        return normalize_content_image_name(name, ("jpg",))
 
     def get_raw_query_params(self, mime: str = "") -> dict[str, Any]:
         """Resolve this config's query params for a file of the given MIME type, dropping keys

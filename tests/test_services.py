@@ -26,10 +26,14 @@ class TestCallUpstreamBackendStampsExtractionEngine:
             metadata=Metadata({"status": "ok"}),
         )
 
-    async def _fake_handler_no_metadata(self, config, file_content, headers, filename, client):
+    async def _fake_handler_no_metadata(
+        self, config, file_content, headers, filename, client
+    ):
         return ProcessedDocument(page_content="hello")
 
-    def test_stamps_backend_type_without_clobbering_existing_metadata(self, monkeypatch):
+    def test_stamps_backend_type_without_clobbering_existing_metadata(
+        self, monkeypatch
+    ):
         monkeypatch.setitem(services.BACKEND_HANDLERS, "foil", self._fake_handler)
         result = asyncio.run(
             services.call_upstream_backend(make_foil_config(), b"x", {}, "f.pdf")

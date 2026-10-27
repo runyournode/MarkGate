@@ -11,6 +11,7 @@ import pytest
 
 from backends import foil
 from backends.docling import DoclingConfig
+from backends.xberg import XbergConfig
 from backends.foil import (
     FoilConfig,
     FoilQueryParams,
@@ -38,6 +39,8 @@ def make_docling_config(**kwargs) -> DoclingConfig:
         description="test",
         upstream_url="http://docling-serve:5001",
         authorized_api_key="key",
+        poll_interval_s=0.5,
+        max_wait_s=3600,
         **kwargs,
     )
 
@@ -177,12 +180,13 @@ class TestProcessingConfigBaseDefaults:
 
 
 class TestContentAddressedImages:
-    """foil-serve names images "imgs/<first 16 hex of sha256(jpeg)>.jpg": foil declares it, other
-    backends keep the per-signature default and don't support lookup by name."""
+    """foil-serve names images "imgs/<first 16 hex of sha256(jpeg)>.jpg": foil declares it, backends
+    without content-named images (e.g. xberg) keep the per-signature default and don't support
+    lookup by name."""
 
     def test_foil_declares_content_addressed_images(self):
         assert FoilConfig.content_addressed_images is True
-        assert DoclingConfig.content_addressed_images is False
+        assert XbergConfig.content_addressed_images is False
 
     @pytest.mark.parametrize(
         "name", ["6f715daebc26828f.jpg", "imgs/6f715daebc26828f.jpg"]
@@ -208,7 +212,7 @@ class TestContentAddressedImages:
         assert FoilConfig.normalize_image_name(name) is None
 
     def test_base_config_does_not_support_lookup_by_name(self):
-        assert DoclingConfig.normalize_image_name("imgs/6f715daebc26828f.jpg") is None
+        assert XbergConfig.normalize_image_name("imgs/6f715daebc26828f.jpg") is None
 
 
 class TestFoilCallKeepsRawImageBytes:

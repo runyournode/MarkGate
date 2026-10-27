@@ -34,6 +34,8 @@ def make_docling_config(**kwargs) -> DoclingConfig:
         description="test",
         upstream_url="http://docling-serve:5001",
         authorized_api_key="key",
+        poll_interval_s=0.5,
+        max_wait_s=3600,
         **kwargs,
     )
 
@@ -71,6 +73,8 @@ class TestFoilRouteAliasValidation:
                 description="test",
                 upstream_url="http://docling-serve:5001",
                 authorized_api_key="key",
+                poll_interval_s=0.5,
+                max_wait_s=3600,
                 aliases=[{"name": "x", "query_params": {}}],
             )
 

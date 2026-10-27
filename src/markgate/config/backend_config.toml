@@ -9,7 +9,7 @@
 #
 # backend_type must match a registered handler in backends/BACKEND_HANDLERS:
 #   "foil"    — Foil-serve (raw bytes POST, optional VLM image description)
-#   "docling" — Docling-serve (multipart POST, rich OCR/layout options)
+#   "docling" — Docling-serve (multipart POST to the async API, preset-based options)
 #   "xberg"   — xberg (multipart POST to /extract; forces output_format="markdown")
 #
 # cache_id: optional stable S3 cache key. When renaming a backend entry,
@@ -141,68 +141,68 @@ include_document_structure = false
 
 
 # ---------------------------------------------------------------------------
-# Docling — standard OCR, no image description
+# Docling — docling-serve-plus air-gap deployment (deploiement-airgap/)
 # ---------------------------------------------------------------------------
+# Runs externally (its own docker compose, docling-serve published on port 5001) — reached via the
+# docling-serve host-gateway alias declared in compose.yaml's extra_hosts. Every preset is named
+# explicitly and must exist in that deployment's mount_config/docling/docling-serve.yaml; image
+# description goes through its "description" preset (OpenAI-compatible endpoint configured there).
+# Asynchronous API (/v1/convert/file/async + status polling): long documents exceed docling-serve's
+# 120 s synchronous limit.
 
-[backends.docling]
+[backends.docling-standard]
 backend_type = "docling"
-description = "Docling-serve — standard OCR with tesseract"
+description = "Docling standard pipeline — heron-101 layout, nemotron OCR, CodeFormula, image description"
 upstream_url = "http://docling-serve:5001"
-authorized_api_key = "${CLIENT_API_KEY_DOCLING}"
+authorized_api_key = "${CLIENT_API_KEY_DOCLING_STANDARD}"
+poll_interval_s = 0.5
+max_wait_s = 3600
 
-[backends.docling.custom_headers]
-X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
+# Only if api_key is set in the deployment's docling-serve.yaml:
+# [backends.docling-standard.custom_headers]
+# X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
 
-[backends.docling.query_params]
+[backends.docling-standard.query_params]
 to_formats = ["md"]
-image_export_mode = "placeholder"
-include_images = false
+# pictures returned inline by docling, then extracted and named after their content like foil's
+# (imgs/<sha16>.png): served, cached in S3 and available through POST /images (engine "docling")
+image_export_mode = "embedded"
+include_images = true
+pipeline = "standard"
+layout_preset = "heron_101"
 do_ocr = true
-force_ocr = true
-ocr_engine = "tesseract"
-ocr_lang = ["en", "fr"]
-pdf_backend = "dlparse_v2"
-table_mode = "accurate"
+force_ocr = false
+ocr_preset = "nemotron_ocr_remote"
+do_table_structure = true
+table_structure_preset = "tableformer_v1_accurate"
 do_formula_enrichment = true
-
-
-# ---------------------------------------------------------------------------
-# Docling — with image description via OpenAI-compatible VLM API
-# ---------------------------------------------------------------------------
-
-[backends.docling-vl]
-backend_type = "docling"
-description = "Docling-serve with Ministral-3B image description via vLLM"
-upstream_url = "http://docling-serve:5001"
-authorized_api_key = "${CLIENT_API_KEY_DOCLING_VL}"
-
-[backends.docling-vl.custom_headers]
-X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
-
-[backends.docling-vl.query_params]
-to_formats = ["md"]
-image_export_mode = "placeholder"
-include_images = false
-do_ocr = true
-force_ocr = true
-ocr_engine = "tesseract"
-ocr_lang = ["en", "fr"]
-pdf_backend = "dlparse_v2"
-table_mode = "accurate"
-do_formula_enrichment = true
+code_formula_preset = "codeformulav2_remote"
 do_picture_description = true
+picture_description_preset = "description"
 picture_description_area_threshold = 0.01
 
-[backends.docling-vl.query_params.picture_description_api]
-url = "http://vlm-server:8000/v1/chat/completions"
-timeout = 60
-concurrency = 10
 
-[backends.docling-vl.query_params.picture_description_api.headers]
-Authorization = "Bearer ${UPSTREAM_VLM_API_KEY}"
+[backends.docling-vlm]
+backend_type = "docling"
+description = "Docling VLM pipeline — dots.mocr, image description"
+upstream_url = "http://docling-serve:5001"
+authorized_api_key = "${CLIENT_API_KEY_DOCLING_VLM}"
+poll_interval_s = 0.5
+max_wait_s = 3600
 
-[backends.docling-vl.query_params.picture_description_api.params]
-model = "ministral-3b"
-max_completion_tokens = 500
+# Only if api_key is set in the deployment's docling-serve.yaml:
+# [backends.docling-vlm.custom_headers]
+# X-Api-Key = "${UPSTREAM_DOCLING_API_KEY}"
 
-
+# Formula enrichment has no effect in the VLM pipeline: dots.mocr writes LaTeX itself.
+[backends.docling-vlm.query_params]
+to_formats = ["md"]
+# pictures returned inline by docling, then extracted and named after their content like foil's
+# (imgs/<sha16>.png): served, cached in S3 and available through POST /images (engine "docling")
+image_export_mode = "embedded"
+include_images = true
+pipeline = "vlm"
+vlm_pipeline_preset = "dots_mocr"
+do_picture_description = true
+picture_description_preset = "description"
+picture_description_area_threshold = 0.01

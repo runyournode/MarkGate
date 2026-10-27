@@ -27,14 +27,22 @@ class TestXbergQueryParams:
         # xberg's ExtractionConfig has many more keys than we model — passthrough must work.
         # Use a key that isn't one of the typed fields below, so this actually exercises
         # extra="allow" rather than a modeled field.
-        config = XbergQueryParams(output_format="markdown", content_filter="boilerplate")
+        config = XbergQueryParams(
+            output_format="markdown", content_filter="boilerplate"
+        )
         assert config.model_dump()["content_filter"] == "boilerplate"
 
     def test_common_params_default_to_unset(self):
         # None (xberg's own default applies) → dropped by exclude_none, same as before typing.
         config = make_xberg_config()
         params = config.get_raw_query_params()
-        for key in ("force_ocr", "ocr", "use_cache", "ocr_strategy", "extraction_timeout_secs"):
+        for key in (
+            "force_ocr",
+            "ocr",
+            "use_cache",
+            "ocr_strategy",
+            "extraction_timeout_secs",
+        ):
             assert key not in params
 
     def test_common_params_overridable(self):

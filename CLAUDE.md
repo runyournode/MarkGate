@@ -32,7 +32,6 @@ uv run uvicorn markgate.main:app --host 0.0.0.0 --port 8080 --reload
 ```bash
 docker build -f Dockerfile -t markgate:<tag> .
 docker compose -f docker/compose.yaml up          # Production stack
-docker compose -f docker/compose.yaml --profile dev-tools-docling up  # With Docling backend
 ```
 
 ## Architecture

@@ -159,7 +159,7 @@ async def get_images(
 
     `engine` and `source_sha256` are the `extraction_engine` / `source_sha256` metadata of the
     process responses; `names` are image paths as written in the Markdown. Only backends whose
-    images are named after their content support this lookup (e.g. foil).
+    images are named after their content support this lookup (foil, docling).
     """
     config = next(
         (cfg for cfg in VERSION_CONFIGS.values() if cfg.backend_type == request.engine),

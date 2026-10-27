@@ -10,8 +10,8 @@ from fastapi import BackgroundTasks
 
 import services
 import storage
-from backends.docling import DoclingConfig
 from backends.foil import FoilConfig
+from backends.xberg import XbergConfig
 from schemas import ExternalDocumentRequestHeaders, Metadata, ProcessedDocument
 
 SHA = "0123456789abcdef" * 4
@@ -28,11 +28,11 @@ def make_foil_config() -> FoilConfig:
     )
 
 
-def make_docling_config() -> DoclingConfig:
-    return DoclingConfig(
-        backend_type="docling",
+def make_xberg_config() -> XbergConfig:
+    return XbergConfig(
+        backend_type="xberg",
         description="test",
-        upstream_url="http://docling-serve:5001",
+        upstream_url="http://xberg-serve:8083/extract",
         authorized_api_key="key",
     )
 
@@ -98,11 +98,9 @@ class TestBuildS3Keys:
         )
 
     def test_other_backends_keep_images_per_signature(self):
-        _, _, _, image_keys = services.build_s3_keys(
-            SHA, "docling", make_docling_config()
-        )
-        assert image_keys.root == f"documents/{SHA}/docling/images"
-        assert image_keys.names_key == f"documents/{SHA}/docling/_images_names.txt"
+        _, _, _, image_keys = services.build_s3_keys(SHA, "xberg", make_xberg_config())
+        assert image_keys.root == f"documents/{SHA}/xberg/images"
+        assert image_keys.names_key == f"documents/{SHA}/xberg/_images_names.txt"
 
 
 class _Version:
@@ -146,10 +144,10 @@ class TestUpdateS3Processed:
         assert s3.objects[f"documents/{SHA}/foil/{IMG_B}"] == b"b"
 
     def test_per_signature_images_are_overwritten(self, s3):
-        docling = make_docling_config()
-        _store(docling, "docling", {IMG_A: b"first"})
-        _store(docling, "docling", {IMG_A: b"second"})
-        assert s3.objects[f"documents/{SHA}/docling/images/{IMG_A}"] == b"second"
+        xberg = make_xberg_config()
+        _store(xberg, "xberg", {IMG_A: b"first"})
+        _store(xberg, "xberg", {IMG_A: b"second"})
+        assert s3.objects[f"documents/{SHA}/xberg/images/{IMG_A}"] == b"second"
 
     def test_images_names_written_even_without_images(self, s3):
         _store(make_foil_config(), "foil", {})

@@ -43,44 +43,112 @@
         "query_params": {
           "$ref": "#/$defs/DoclingQueryParams",
           "default": {
+            "to_formats": null,
+            "image_export_mode": null,
+            "include_images": null,
+            "images_scale": null,
             "from_formats": null,
-            "to_formats": [
-              "md"
-            ],
-            "image_export_mode": "placeholder",
-            "include_images": true,
-            "do_ocr": true,
-            "force_ocr": false,
-            "ocr_engine": "auto",
-            "ocr_lang": null,
-            "pdf_backend": "docling_parse",
-            "do_table_structure": true,
-            "table_mode": "fast",
-            "table_cell_matching": true,
-            "abort_on_error": false,
-            "do_picture_classification": false,
-            "do_picture_description": false,
-            "picture_description_area_threshold": 0.0,
+            "pipeline": null,
+            "pdf_backend": null,
+            "layout_preset": null,
+            "do_ocr": null,
+            "force_ocr": null,
+            "ocr_preset": null,
+            "do_table_structure": null,
+            "table_structure_preset": null,
+            "do_formula_enrichment": null,
+            "do_code_enrichment": null,
+            "code_formula_preset": null,
+            "vlm_pipeline_preset": null,
+            "do_picture_description": null,
             "picture_description_preset": null,
-            "picture_description_api": null,
-            "do_formula_enrichment": false,
-            "do_code_enrichment": false,
-            "md_page_break_placeholder": ""
+            "picture_description_area_threshold": null,
+            "do_picture_classification": null,
+            "picture_classification_preset": null,
+            "abort_on_error": null,
+            "md_page_break_placeholder": null
           }
+        },
+        "poll_interval_s": {
+          "title": "Poll Interval S",
+          "type": "number"
+        },
+        "max_wait_s": {
+          "title": "Max Wait S",
+          "type": "number"
         }
       },
       "required": [
         "backend_type",
         "description",
         "upstream_url",
-        "authorized_api_key"
+        "authorized_api_key",
+        "poll_interval_s",
+        "max_wait_s"
       ],
       "title": "DoclingConfig",
       "type": "object"
     },
     "DoclingQueryParams": {
       "additionalProperties": false,
+      "description": "docling-serve conversion options. Every field defaults to None and is only sent when set\nin backend_config.toml: the request carries exactly what the config declares, docling-serve's\nown defaults apply to the rest. Presets must exist on the docling-serve side (its config).",
       "properties": {
+        "to_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Formats"
+        },
+        "image_export_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "embedded",
+                "referenced",
+                "placeholder"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Export Mode"
+        },
+        "include_images": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Include Images"
+        },
+        "images_scale": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Images Scale"
+        },
         "from_formats": {
           "anyOf": [
             {
@@ -96,111 +164,169 @@
           "default": null,
           "title": "From Formats"
         },
-        "to_formats": {
-          "default": [
-            "md"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "title": "To Formats",
-          "type": "array"
-        },
-        "image_export_mode": {
-          "default": "placeholder",
-          "enum": [
-            "embedded",
-            "referenced",
-            "placeholder"
-          ],
-          "title": "Image Export Mode",
-          "type": "string"
-        },
-        "include_images": {
-          "default": true,
-          "title": "Include Images",
-          "type": "boolean"
-        },
-        "do_ocr": {
-          "default": true,
-          "title": "Do Ocr",
-          "type": "boolean"
-        },
-        "force_ocr": {
-          "default": false,
-          "title": "Force Ocr",
-          "type": "boolean"
-        },
-        "ocr_engine": {
-          "default": "auto",
-          "title": "Ocr Engine",
-          "type": "string"
-        },
-        "ocr_lang": {
+        "pipeline": {
           "anyOf": [
             {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
+              "enum": [
+                "standard",
+                "vlm"
+              ],
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Ocr Lang"
+          "title": "Pipeline"
         },
         "pdf_backend": {
-          "default": "docling_parse",
-          "enum": [
-            "docling_parse",
-            "pypdfium2",
-            "dlparse_v1",
-            "dlparse_v2",
-            "dlparse_v4"
+          "anyOf": [
+            {
+              "enum": [
+                "docling_parse",
+                "pypdfium2"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Pdf Backend",
-          "type": "string"
+          "default": null,
+          "title": "Pdf Backend"
+        },
+        "layout_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layout Preset"
+        },
+        "do_ocr": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Do Ocr"
+        },
+        "force_ocr": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Force Ocr"
+        },
+        "ocr_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ocr Preset"
         },
         "do_table_structure": {
-          "default": true,
-          "title": "Do Table Structure",
-          "type": "boolean"
-        },
-        "table_mode": {
-          "default": "fast",
-          "enum": [
-            "fast",
-            "accurate"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Table Mode",
-          "type": "string"
+          "default": null,
+          "title": "Do Table Structure"
         },
-        "table_cell_matching": {
-          "default": true,
-          "title": "Table Cell Matching",
-          "type": "boolean"
+        "table_structure_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Structure Preset"
         },
-        "abort_on_error": {
-          "default": false,
-          "title": "Abort On Error",
-          "type": "boolean"
+        "do_formula_enrichment": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Do Formula Enrichment"
         },
-        "do_picture_classification": {
-          "default": false,
-          "title": "Do Picture Classification",
-          "type": "boolean"
+        "do_code_enrichment": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Do Code Enrichment"
+        },
+        "code_formula_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code Formula Preset"
+        },
+        "vlm_pipeline_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vlm Pipeline Preset"
         },
         "do_picture_description": {
-          "default": false,
-          "title": "Do Picture Description",
-          "type": "boolean"
-        },
-        "picture_description_area_threshold": {
-          "default": 0.0,
-          "title": "Picture Description Area Threshold",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Do Picture Description"
         },
         "picture_description_preset": {
           "anyOf": [
@@ -214,31 +340,65 @@
           "default": null,
           "title": "Picture Description Preset"
         },
-        "picture_description_api": {
+        "picture_description_area_threshold": {
           "anyOf": [
             {
-              "$ref": "#/$defs/PictureDescriptionApiConfig"
+              "type": "number"
             },
             {
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "title": "Picture Description Area Threshold"
         },
-        "do_formula_enrichment": {
-          "default": false,
-          "title": "Do Formula Enrichment",
-          "type": "boolean"
+        "do_picture_classification": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Do Picture Classification"
         },
-        "do_code_enrichment": {
-          "default": false,
-          "title": "Do Code Enrichment",
-          "type": "boolean"
+        "picture_classification_preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Picture Classification Preset"
+        },
+        "abort_on_error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abort On Error"
         },
         "md_page_break_placeholder": {
-          "default": "",
-          "title": "Md Page Break Placeholder",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Md Page Break Placeholder"
         }
       },
       "title": "DoclingQueryParams",
@@ -339,7 +499,7 @@
     },
     "FoilRouteAlias": {
       "additionalProperties": false,
-      "description": "A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment,\nfor clients that cannot set query params.\n\nRegistered under the fixed `/alias` prefix as `/alias/md/{version}/{name}/process`,\n`/alias/{version}/{name}/process` and `/alias/{version}/{name}/process/download` \u2014 `{name}`\nalways sits between `{version}` and `process` so the path still ends in `/process`(`/download`).\nEach route resolves to the exact same FoilConfig (and therefore the exact same cache entry /\nprocessing lock, see FoilConfig.cache_key()) as calling the parent Version with the equivalent\nquery params.",
+      "description": "A static route alias exposing a preset of SpreadsheetOverrides as a URL path segment, for\nclients that cannot set query params. Registered as\n`/alias/{md/}{version}/{name}/process{/download}`. Resolves to the exact same FoilConfig\n(and cache entry / processing lock, see FoilConfig.cache_key()) as calling the parent\nVersion with the equivalent query params.",
       "properties": {
         "name": {
           "description": "URL path segment, e.g. 'spreadsheet_ocr' for /alias/{version}/spreadsheet_ocr/process.",
@@ -359,50 +519,6 @@
       "title": "FoilRouteAlias",
       "type": "object"
     },
-    "PictureDescriptionApiConfig": {
-      "additionalProperties": false,
-      "description": "Config for picture description via an OpenAI-compatible API endpoint.",
-      "properties": {
-        "url": {
-          "title": "Url",
-          "type": "string"
-        },
-        "headers": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "title": "Headers",
-          "type": "object"
-        },
-        "params": {
-          "additionalProperties": true,
-          "default": {},
-          "title": "Params",
-          "type": "object"
-        },
-        "timeout": {
-          "default": 20.0,
-          "title": "Timeout",
-          "type": "number"
-        },
-        "concurrency": {
-          "default": 1,
-          "title": "Concurrency",
-          "type": "integer"
-        },
-        "prompt": {
-          "default": "You are a document analysis expert who specializes in creating text descriptions for images.\nYou will receive an image of a picture or figure. Your job is to create a short description of the image.\nInstructions:\n1. Carefully examine the provided image.\n2. Output a faithful description of the image with enough specific detail to accurately reconstruct it.\nIf the image is a figure or contains alpha-numeric data, include that data in the output.",
-          "title": "Prompt",
-          "type": "string"
-        }
-      },
-      "required": [
-        "url"
-      ],
-      "title": "PictureDescriptionApiConfig",
-      "type": "object"
-    },
     "SpreadsheetMode": {
       "description": "Mirrors foil_serve.schemas.SpreadsheetMode \u2014 the values foil-serve accepts.",
       "enum": [
@@ -416,7 +532,7 @@
     },
     "SpreadsheetOverrides": {
       "additionalProperties": false,
-      "description": "Per-request overrides for foil-backed Versions.\n\nA field left at None means \"no override \u2014 use this Version's configured value\" (whether that\nvalue comes from backend_config.toml or from the field's own default).\n\nextra=\"forbid\" doesn't affect the query-string path (as_query() below only ever constructs\nthis from its own declared Query() params) \u2014 it matters for FoilRouteAlias.query_params,\nwhere this model validates a TOML dict: a typo'd/unsupported key there must fail at startup,\nnot be silently dropped.",
+      "description": "Per-request overrides for foil-backed Versions. A field left at None means \"no override \u2014\nuse this Version's configured value\". extra=\"forbid\" mainly matters for\nFoilRouteAlias.query_params, where this model validates a TOML dict and a typo'd/unsupported\nkey must fail at startup rather than be silently dropped.",
       "properties": {
         "spreadsheet_mode": {
           "anyOf": [
