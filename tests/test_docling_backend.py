@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from backends import docling
 from backends.docling import DoclingConfig, DoclingQueryParams, extract_embedded_images
+from backends.utils import UpstreamProcessingError
 from schemas import ProcessedDocument
 
 PDF_MIME = "application/pdf"
@@ -134,8 +135,64 @@ class TestAsyncCall:
                 return httpx.Response(200, json={"task_id": "t1"})
             return httpx.Response(200, json={"task_id": "t1", "task_status": "failure"})
 
-        with pytest.raises(ValueError, match="failed"):
+        with pytest.raises(UpstreamProcessingError, match="failed"):
             run_call(make_docling_config(), handler)
+
+    @staticmethod
+    def _result_handler(result: dict):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/convert/file/async":
+                return httpx.Response(200, json={"task_id": "t1"})
+            if request.url.path == "/v1/status/poll/t1":
+                return httpx.Response(200, json={"task_status": "success"})
+            return httpx.Response(200, json=result)
+
+        return handler
+
+    def test_document_failure_raises_with_docling_message(self):
+        # The task succeeds while the document failed: md_content is null, the cause is in errors.
+        errors = [
+            {
+                "component_type": "pipeline",
+                "module_name": "VlmPipeline",
+                "error_message": "HTML table exceeds 1000 grid cells",
+                "category": "unknown",
+                "page_no": None,
+            }
+        ]
+        handler = self._result_handler(
+            {
+                "document": {"filename": "f.pdf", "md_content": None},
+                "status": "failure",
+                "errors": errors,
+                "processing_time": 12.5,
+            }
+        )
+
+        with pytest.raises(UpstreamProcessingError) as exc_info:
+            run_call(make_docling_config(), handler)
+        assert exc_info.value.status_code == 502
+        assert (
+            exc_info.value.client_reason
+            == "[VlmPipeline] HTML table exceeds 1000 grid cells"
+        )
+        assert exc_info.value.details == {
+            "task_id": "t1",
+            "status": "failure",
+            "errors": errors,
+            "processing_time": 12.5,
+        }
+
+    @pytest.mark.parametrize("md_content", [None, ""])
+    def test_no_markdown_is_empty_document(self, md_content):
+        handler = self._result_handler(
+            {"document": {"md_content": md_content}, "status": "success", "errors": []}
+        )
+
+        with pytest.raises(UpstreamProcessingError) as exc_info:
+            run_call(make_docling_config(), handler)
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.client_reason == "the document has no extractable content"
 
     def test_gives_up_after_max_wait(self):
         def handler(request: httpx.Request) -> httpx.Response:

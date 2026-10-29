@@ -1,11 +1,13 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
+import traceback
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path as FilePath
-from typing import NamedTuple
+from typing import Any, NamedTuple
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -13,6 +15,7 @@ import redis
 from fastapi import BackgroundTasks, HTTPException
 
 from backends import BACKEND_HANDLERS
+from backends.utils import UpstreamProcessingError
 from config.loader import VERSION_CONFIGS
 from config.settings import settings
 from contracts import ProcessingConfig
@@ -256,12 +259,94 @@ async def update_s3_processed(
     )
 
 
+_MAX_ERROR_BODY_CHARS = 20_000
+
+
+def upstream_error_details(error: Exception) -> dict[str, Any] | None:
+    """What the backend said about a failure: UpstreamProcessingError's payload, or a non-2xx
+    response's status and body (parsed JSON when possible — foil-serve answers {"detail": ...})."""
+    if isinstance(error, UpstreamProcessingError):
+        return error.details
+    if isinstance(error, httpx.HTTPStatusError):
+        response = error.response
+        try:
+            body: Any = response.json()
+        except ValueError:
+            body = response.text[:_MAX_ERROR_BODY_CHARS]
+        return {
+            "status_code": response.status_code,
+            "url": str(response.request.url),
+            "body": body,
+        }
+    return None
+
+
+# Backend 4xx about the document itself, relayed as is: retrying is pointless, it's not an outage.
+# Any other backend status (5xx, and 401/403/404 = MarkGate's own credentials/URL) becomes a 502.
+_RELAYED_UPSTREAM_STATUSES = frozenset({400, 413, 415, 422})
+_MAX_CLIENT_REASON_CHARS = 500
+_URL = re.compile(r"https?://\S+")
+
+
+def _redact(reason: str) -> str:
+    """Strip what the client mustn't see from a backend message: URLs (an httpx error quoted by
+    the backend carries the URL it called). Truncated to _MAX_CLIENT_REASON_CHARS."""
+    reason = _URL.sub("<upstream>", reason)
+    if len(reason) > _MAX_CLIENT_REASON_CHARS:
+        reason = reason[:_MAX_CLIENT_REASON_CHARS] + "…"
+    return reason
+
+
+def _http_error_reason(response: httpx.Response) -> str:
+    """The backend's own `detail` (foil-serve / FastAPI: {"detail": "<str>"}) for a 4xx/5xx,
+    else just its status."""
+    if response.status_code not in (401, 403, 404):
+        try:
+            detail = response.json().get("detail")
+        except ValueError, AttributeError:
+            detail = None
+        if isinstance(detail, str) and detail:
+            return detail
+    return f"the backend answered HTTP {response.status_code}"
+
+
+def classify_upstream_error(error: Exception) -> tuple[int, str]:
+    """(HTTP status for the client, reason) of an upstream failure. The reason is the backend's
+    own explanation when there is one, redacted (no URL); never a raw body or a traceback."""
+    if isinstance(error, UpstreamProcessingError):
+        return error.status_code, _redact(error.client_reason)
+    if isinstance(error, httpx.HTTPStatusError):
+        code = error.response.status_code
+        status = code if code in _RELAYED_UPSTREAM_STATUSES else 502
+        return status, _redact(_http_error_reason(error.response))
+    if isinstance(error, (httpx.TimeoutException, TimeoutError)):
+        return 504, "the backend timed out"
+    if isinstance(error, httpx.TransportError):
+        return 502, "the backend is unreachable"
+    return 502, "internal error"
+
+
+def upstream_failure_detail(
+    error: Exception, version: Enum, filename: str, file_hash: str
+) -> tuple[int, str]:
+    """(HTTP status, message) returned to the client for an upstream failure. The message names
+    the hash under which the full details are archived (failed_requests/*_{hash[:12]}_*);
+    verbose_errors appends the raw error and upstream response body."""
+    status, reason = classify_upstream_error(error)
+    detail = f"[{version.value}] Processing failed for '{filename}': {reason} (sha256: {file_hash[:12]})"
+    if settings.verbose_errors:
+        detail += f"\nUpstream error: {error}"
+        if isinstance(error, httpx.HTTPStatusError):
+            detail += f"\nUpstream response body: {error.response.text}"
+    return status, detail
+
+
 async def save_failed_request(
     file_content: bytes,
     filename: str,
     file_hash: str,
     version: Enum,
-    error_message: str,
+    error: Exception,
     upstream_duration_ms: float,
 ) -> None:
     """Fire-and-forget: save failed request artifacts for debugging.
@@ -271,13 +356,21 @@ async def save_failed_request(
     prefix = f"{settings.failed_requests_s3_prefix}/{now.strftime('%Y%m%dT%H%M%S')}_{file_hash[:12]}_{version.value}"
     mime = await asyncio.to_thread(get_mime_type, file_content)
     ext = mime_to_ext(mime)
+    client_status_code, client_message = upstream_failure_detail(
+        error, version, filename, file_hash
+    )
     info = FailedRequestInfo(
         timestamp=now,
         version=version.value,
         filename=filename,
         file_hash=file_hash,
-        error_message=error_message,
+        error_type=type(error).__name__,
+        error_message=str(error),
         upstream_duration_ms=upstream_duration_ms,
+        upstream_details=upstream_error_details(error),
+        traceback="".join(traceback.format_exception(error)),
+        client_status_code=client_status_code,
+        client_message=client_message,
     )
 
     if s3_is_active():
@@ -464,7 +557,7 @@ async def _resolve_document(
                     filename=filename,
                     file_hash=file_hash,
                     version=version,
-                    error_message=str(e),
+                    error=e,
                     upstream_duration_ms=upstream_duration_ms,
                 )
             )
@@ -552,9 +645,19 @@ async def resolve_request(
     both are known from the request), which a client needs to call POST /images.
 
     Returns (processed_document, from_cache, filename, file_hash, image_keys, start_time).
-    Raises HTTPException on lock timeout (504) or upstream failure (502).
+    Raises HTTPException on an empty file (422, before anything else), lock timeout (504) or
+    upstream failure (status from classify_upstream_error).
     """
     start_time = time.perf_counter()
+
+    if not file_content:
+        logger.warning(
+            f"REQ [{version.value}] | EMPTY FILE rejected | File: {headers_data.filename}"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"[{version.value}] '{headers_data.filename}' is empty (0 bytes).",
+        )
 
     file_hash, mime = await asyncio.gather(
         asyncio.to_thread(compute_hash, file_content),
@@ -612,15 +715,16 @@ async def resolve_request(
         raise HTTPException(status_code=504, detail=detail)
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
+        status, detail = upstream_failure_detail(e, version, filename, file_hash)
         logger.error(
-            f"PROC [{version.value}]{label} | UPSTREAM FAIL | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms | Error: {e}"
+            f"PROC [{version.value}]{label} | UPSTREAM FAIL | HTTP {status} | File: {filename} | Hash: {file_hash} | Duration: {duration:.0f} ms | Error: {e}"
+            + (
+                f" | Upstream body: {e.response.text[:500]}"
+                if isinstance(e, httpx.HTTPStatusError)
+                else ""
+            )
         )
-        detail = (
-            f"[{version.value}] Upstream processing failed for '{filename}': {str(e)}"
-        )
-        if settings.verbose_errors and isinstance(e, httpx.HTTPStatusError):
-            detail += f"\nUpstream response body: {e.response.text}"
-        raise HTTPException(status_code=502, detail=detail)
+        raise HTTPException(status_code=status, detail=detail)
 
     existing = processed_document.metadata.root if processed_document.metadata else {}
     processed_document.metadata = Metadata(

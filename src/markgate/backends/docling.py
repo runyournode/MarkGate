@@ -9,7 +9,11 @@ API contract (asynchronous — the synchronous endpoint gives up after docling-s
   GET  {upstream_url}/v1/status/poll/{task_id}  every poll_interval_s, until task_status is
        success / partial_success / failure (no `wait` param: docling-serve answers immediately)
   GET  {upstream_url}/v1/result/{task_id}
-       Response JSON: {document: {md_content: str}, status: str, processing_time: float, errors: [...]}
+       Response JSON: {document: {md_content: str | null}, status: str, processing_time: float,
+       errors: [{module_name, error_message, ...}]}
+       The task can succeed while the document failed (status "failure", md_content null): raised
+       as an UpstreamProcessingError carrying docling's errors (502); no Markdown without failure
+       is an empty document (422).
 
 upstream_url is the docling-serve base URL (e.g. http://docling-serve:5001).
 
@@ -29,6 +33,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from backends.utils import (
+    EMPTY_CONTENT_REASON,
+    UpstreamProcessingError,
     content_image_name,
     merge_headers,
     normalize_content_image_name,
@@ -184,15 +190,45 @@ async def call(
         await asyncio.sleep(config.poll_interval_s)
 
     if status["task_status"] == "failure":
-        raise ValueError(f"docling task {task_id} failed: {status}")
+        raise UpstreamProcessingError(
+            f"docling task {task_id} failed: {status}",
+            details=status,
+            client_reason="docling conversion task failed",
+        )
 
     resp = await client.get(f"{base_url}/v1/result/{task_id}", headers=request_headers)
     resp.raise_for_status()
     data = resp.json()
 
-    page_content, images = extract_embedded_images(
-        data.get("document", {}).get("md_content", "")
+    md_content = (data.get("document") or {}).get("md_content")
+    errors = data.get("errors") or []
+    summary = "; ".join(
+        f"[{e.get('module_name')}] {e.get('error_message')}" for e in errors
     )
+    details = {
+        "task_id": task_id,
+        "status": data.get("status"),
+        "errors": errors,
+        "processing_time": data.get("processing_time"),
+    }
+    if data.get("status") == "failure":
+        raise UpstreamProcessingError(
+            f"docling conversion failed: {summary or 'no error given'}",
+            details=details,
+            client_reason=summary or "docling conversion failed",
+        )
+    if not md_content:
+        reason = (
+            f"{EMPTY_CONTENT_REASON} ({summary})" if summary else EMPTY_CONTENT_REASON
+        )
+        raise UpstreamProcessingError(
+            f"docling returned no Markdown (status: {data.get('status')})",
+            details=details,
+            status_code=422,
+            client_reason=reason,
+        )
+
+    page_content, images = extract_embedded_images(md_content)
 
     return ProcessedDocument(
         page_content=page_content,

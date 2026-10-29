@@ -266,7 +266,13 @@ All keys are case-insensitive. Environment variables take precedence over the TO
 
 | Variable / key   | Default | Description                                                                   |
 |------------------|---------|-------------------------------------------------------------------------------|
-| `verbose_errors` | `false` | Forward upstream error details to the client  |
+| `verbose_errors` | `false` | Append the raw upstream error and response body to the client message. When `false`, the client still gets the backend's reason (URLs redacted) and the short hash of the `failed_requests/` archive  |
+
+Upstream failures: a backend 400/413/415/422 (the document is at fault) is relayed with the same status;
+an empty document is a 422; any other backend error is a 502 (504 on timeout). Whatever `verbose_errors`
+says, the full details (backend payload or response body, traceback, what the client got) are archived
+in `failed_requests/<timestamp>_<hash12>_<version>/error.json`. A 0-byte upload is rejected (422) before
+any backend call.
 
 **Image lookup** (`POST /images`):
 

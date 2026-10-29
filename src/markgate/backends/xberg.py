@@ -14,7 +14,11 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-from backends.utils import merge_headers
+from backends.utils import (
+    EMPTY_CONTENT_REASON,
+    UpstreamProcessingError,
+    merge_headers,
+)
 from contracts import ProcessingConfig
 from schemas import Metadata, ProcessedDocument
 
@@ -103,13 +107,22 @@ async def call(
 
     results = data.get("results", [])
     if not results:
-        raise ValueError(
-            f"xberg returned no results (errors: {data.get('errors')}). Full response: {data}"
+        errors = data.get("errors")
+        raise UpstreamProcessingError(
+            f"xberg returned no results (errors: {errors})",
+            details={"response": data},
+            status_code=502 if errors else 422,
+            client_reason=f"xberg errors: {errors}" if errors else EMPTY_CONTENT_REASON,
         )
     document = results[0]
     page_content: str = document.get("content", "")
     if not page_content:
-        raise ValueError(f"Upstream returned empty content. Full response: {data}")
+        raise UpstreamProcessingError(
+            "xberg returned empty content",
+            details={"response": data},
+            status_code=422,
+            client_reason=EMPTY_CONTENT_REASON,
+        )
 
     return ProcessedDocument(
         page_content=page_content,

@@ -144,8 +144,18 @@ class FailedRequestInfo(BaseModel):
     version: str
     filename: str
     file_hash: str
+    error_type: str
+    """Exception class, e.g. "HTTPStatusError", "UpstreamProcessingError", "TypeError"."""
     error_message: str
     upstream_duration_ms: float
+    upstream_details: dict[str, Any] | None = None
+    """What the backend said about the failure: its error payload (UpstreamProcessingError), or
+    its HTTP status and response body (non-2xx). None when the backend gave nothing (timeout,
+    connection error, MarkGate bug)."""
+    traceback: str
+    client_status_code: int
+    client_message: str
+    """What the client got (HTTP status and detail), to match a client report to this archive."""
 
 
 class ServiceHealth(BaseModel):

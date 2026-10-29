@@ -20,7 +20,12 @@ import httpx
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from backends.utils import merge_headers, normalize_content_image_name
+from backends.utils import (
+    EMPTY_CONTENT_REASON,
+    UpstreamProcessingError,
+    merge_headers,
+    normalize_content_image_name,
+)
 from contracts import ProcessingConfig
 from schemas import Metadata, ProcessedDocument
 
@@ -212,7 +217,12 @@ async def call(
 
     page_content: str = data.get("page_content", "")
     if not page_content:
-        raise ValueError(f"Upstream returned empty page_content. Full response: {data}")
+        raise UpstreamProcessingError(
+            "foil returned empty page_content",
+            details={"response": data},
+            status_code=422,
+            client_reason=EMPTY_CONTENT_REASON,
+        )
 
     images = {
         name: base64.b64decode(b64) for name, b64 in (data.get("images") or {}).items()

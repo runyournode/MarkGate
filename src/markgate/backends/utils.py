@@ -2,11 +2,37 @@
 
 import hashlib
 import re
+from typing import Any
 
 _CLIENT_HEADERS_BLOCKLIST: frozenset[str] = frozenset({"authorization"})
 
 IMAGES_DIR = "imgs"
 _CONTENT_HASH = re.compile(r"^[0-9a-f]{16}$")
+
+
+EMPTY_CONTENT_REASON = "the document has no extractable content"
+
+
+class UpstreamProcessingError(Exception):
+    """The backend answered but couldn't convert the document.
+
+    `details` (the backend's own error payload) is archived with the failed request (see
+    services.save_failed_request). `client_reason` is what the client is told (defaults to the
+    message), with `status_code`: 422 when the document itself yields nothing, 502 otherwise.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        details: dict[str, Any] | None = None,
+        *,
+        status_code: int = 502,
+        client_reason: str | None = None,
+    ):
+        super().__init__(message)
+        self.details = details
+        self.status_code = status_code
+        self.client_reason = client_reason or message
 
 
 def merge_headers(upstream: dict[str, str], custom: dict[str, str]) -> dict[str, str]:
